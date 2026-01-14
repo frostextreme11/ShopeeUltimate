@@ -248,3 +248,72 @@ async def websocket_logs(websocket: WebSocket):
                 pass
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+# Login-related endpoints
+
+def run_login_sync():
+    """Run login in separate thread with its own event loop."""
+    import sys
+    
+    if sys.platform == 'win32':
+        loop = asyncio.ProactorEventLoop()
+    else:
+        loop = asyncio.new_event_loop()
+    
+    asyncio.set_event_loop(loop)
+    
+    try:
+        scraper = ShopeeScraper()
+        loop.run_until_complete(scraper.open_login_browser())
+    finally:
+        loop.close()
+
+
+@router.get("/session/status")
+def get_session_status():
+    """
+    Check if user has a saved Shopee session.
+    """
+    scraper = ShopeeScraper()
+    has_session = scraper.has_saved_cookies()
+    
+    return {
+        "logged_in": has_session,
+        "message": "Session found" if has_session else "Please login to Shopee first"
+    }
+
+
+@router.post("/session/login")
+async def start_login():
+    """
+    Open browser for user to login to Shopee.
+    This runs in background and returns immediately.
+    """
+    # Start login in a separate thread
+    thread = threading.Thread(
+        target=run_login_sync,
+        daemon=True
+    )
+    thread.start()
+    
+    return {
+        "status": "started",
+        "message": "Browser opening for login. Please login in the browser window."
+    }
+
+
+@router.delete("/session/logout")
+def logout():
+    """
+    Clear saved Shopee session.
+    """
+    from pathlib import Path
+    cookies_path = Path(__file__).parent.parent / "shopee_cookies.json"
+    
+    if cookies_path.exists():
+        cookies_path.unlink()
+        return {"status": "success", "message": "Logged out successfully"}
+    
+    return {"status": "success", "message": "No session to clear"}
+

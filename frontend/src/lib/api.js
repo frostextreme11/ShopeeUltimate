@@ -118,4 +118,22 @@ export const createLogsWebSocket = (onMessage) => {
     return ws
 }
 
+// ===== Session API =====
+
+export const getSessionStatus = async () => {
+    const response = await api.get('/session/status')
+    return response.data
+}
+
+export const startLogin = async () => {
+    const response = await api.post('/session/login')
+    return response.data
+}
+
+export const logout = async () => {
+    const response = await api.delete('/session/logout')
+    return response.data
+}
+
 export default api
+

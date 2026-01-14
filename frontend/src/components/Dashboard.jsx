@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
     Search,
@@ -8,14 +8,18 @@ import {
     TrendingUp,
     Terminal,
     Loader2,
-    Settings,
+    LogIn,
+    LogOut,
     Trash2,
+    CheckCircle,
+    AlertCircle,
 } from 'lucide-react'
 import ProductGrid from './ProductGrid'
 import ScrapeTerminal from './ScrapeTerminal'
 import { StatsSkeleton } from './SkeletonLoader'
 import { useStats, useScrape, useClearAllProducts } from '../hooks/useProducts'
 import { formatNumber } from '../lib/utils'
+import { getSessionStatus, startLogin, logout as apiLogout } from '../lib/api'
 
 /**
  * Main dashboard component
@@ -29,9 +33,69 @@ export default function Dashboard() {
         order: 'desc',
     })
 
+    // Session state
+    const [isLoggedIn, setIsLoggedIn] = useState(false)
+    const [sessionLoading, setSessionLoading] = useState(true)
+    const [loginLoading, setLoginLoading] = useState(false)
+
     const { data: stats, isLoading: statsLoading } = useStats()
     const scrapeMutation = useScrape()
     const clearAllMutation = useClearAllProducts()
+
+    // Check session on load
+    useEffect(() => {
+        checkSession()
+    }, [])
+
+    const checkSession = async () => {
+        try {
+            setSessionLoading(true)
+            const status = await getSessionStatus()
+            setIsLoggedIn(status.logged_in)
+        } catch (error) {
+            console.error('Failed to check session:', error)
+        } finally {
+            setSessionLoading(false)
+        }
+    }
+
+    // Handle login
+    const handleLogin = async () => {
+        try {
+            setLoginLoading(true)
+            await startLogin()
+            // Wait a bit then start checking for login
+            setTimeout(() => {
+                const checkInterval = setInterval(async () => {
+                    const status = await getSessionStatus()
+                    if (status.logged_in) {
+                        setIsLoggedIn(true)
+                        setLoginLoading(false)
+                        clearInterval(checkInterval)
+                    }
+                }, 2000)
+
+                // Stop checking after 5 minutes
+                setTimeout(() => {
+                    clearInterval(checkInterval)
+                    setLoginLoading(false)
+                }, 300000)
+            }, 3000)
+        } catch (error) {
+            console.error('Login failed:', error)
+            setLoginLoading(false)
+        }
+    }
+
+    // Handle logout
+    const handleLogout = async () => {
+        try {
+            await apiLogout()
+            setIsLoggedIn(false)
+        } catch (error) {
+            console.error('Logout failed:', error)
+        }
+    }
 
     // Handle scrape submit
     const handleScrape = async (e) => {
@@ -41,6 +105,8 @@ export default function Dashboard() {
         setShowTerminal(true)
         try {
             await scrapeMutation.mutateAsync({ keyword, maxPages })
+            // Recheck session in case it expired
+            setTimeout(checkSession, 2000)
         } catch (error) {
             console.error('Scrape failed:', error)
         }
@@ -102,6 +168,53 @@ export default function Dashboard() {
                         </motion.div>
 
                         <div className="flex items-center gap-3">
+                            {/* Session Status */}
+                            {!sessionLoading && (
+                                <div className={`flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg ${isLoggedIn
+                                        ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                        : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                                    }`}>
+                                    {isLoggedIn ? (
+                                        <>
+                                            <CheckCircle className="w-4 h-4" />
+                                            <span className="hidden sm:inline">Logged In</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <AlertCircle className="w-4 h-4" />
+                                            <span className="hidden sm:inline">Not Logged In</span>
+                                        </>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Login/Logout Button */}
+                            <motion.button
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                                onClick={isLoggedIn ? handleLogout : handleLogin}
+                                disabled={loginLoading || sessionLoading}
+                                className={`btn-cyber flex items-center gap-2 ${!isLoggedIn ? 'border-cyber-cyan text-cyber-cyan animate-pulse' : ''
+                                    }`}
+                            >
+                                {loginLoading ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        <span className="hidden sm:inline">Opening Browser...</span>
+                                    </>
+                                ) : isLoggedIn ? (
+                                    <>
+                                        <LogOut className="w-4 h-4" />
+                                        <span className="hidden sm:inline">Logout</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <LogIn className="w-4 h-4" />
+                                        <span className="hidden sm:inline">Login to Shopee</span>
+                                    </>
+                                )}
+                            </motion.button>
+
                             <motion.button
                                 whileHover={{ scale: 1.05 }}
                                 whileTap={{ scale: 0.95 }}
@@ -117,6 +230,36 @@ export default function Dashboard() {
             </header>
 
             <main className="container mx-auto px-4 py-8">
+                {/* Login Warning Banner */}
+                {!isLoggedIn && !sessionLoading && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center gap-4"
+                    >
+                        <AlertCircle className="w-6 h-6 text-yellow-400 flex-shrink-0" />
+                        <div className="flex-1">
+                            <p className="text-yellow-200 font-medium">Login Required</p>
+                            <p className="text-yellow-400/70 text-sm">
+                                Please click "Login to Shopee" button above. A browser will open - login to your Shopee account, then return here.
+                            </p>
+                        </div>
+                        <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={handleLogin}
+                            disabled={loginLoading}
+                            className="btn-cyber-primary px-6"
+                        >
+                            {loginLoading ? (
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                            ) : (
+                                'Login Now'
+                            )}
+                        </motion.button>
+                    </motion.div>
+                )}
+
                 {/* Scrape Form */}
                 <motion.section
                     initial={{ opacity: 0, y: 20 }}
