@@ -7,6 +7,7 @@ Features:
 - Persistent cookie storage
 - Stealth mode with playwright-stealth
 - Auto-scroll for lazy loading
+- Robust error handling
 """
 import asyncio
 import json
@@ -18,7 +19,7 @@ from pathlib import Path
 from typing import List, Optional, Callable
 from urllib.parse import quote
 
-from playwright.async_api import async_playwright, Page, Browser
+from playwright.async_api import async_playwright, Page, Browser, TimeoutError as PlaywrightTimeout
 from playwright_stealth import stealth_async
 
 from .models import Product
@@ -97,7 +98,7 @@ class ShopeeScraper:
             self.log("🔑 Waiting for you to login...")
             self.log("💡 After login, navigate to the homepage to confirm")
             
-            # Wait for successful login (user reaches homepage or account page)
+            # Wait for successful login (user reaches homepage or a page that indicates login)
             try:
                 # Wait for URL to change to homepage or a page that indicates login
                 await page.wait_for_url(
@@ -132,6 +133,68 @@ class ShopeeScraper:
                 await playwright.stop()
             self.log("🏁 Login browser closed")
     
+    async def wait_for_page_stable(self, page: Page, timeout: int = 10000):
+        """Wait for page to be stable (no navigation happening)."""
+        try:
+            # Wait for network to be idle
+            await page.wait_for_load_state("networkidle", timeout=timeout)
+        except:
+            pass
+        
+        # Extra wait to ensure stability
+        await asyncio.sleep(1)
+    
+    async def safe_scroll(self, page: Page, count: int = 5):
+        """Auto-scroll with error handling."""
+        self.log(f"📜 Scrolling ({count}x)...")
+        
+        for i in range(count):
+            try:
+                # Check if page is still valid
+                current_url = page.url
+                
+                await page.evaluate("window.scrollBy(0, window.innerHeight)")
+                await asyncio.sleep(random.uniform(0.8, 1.5))
+                self.log(f"   Scroll {i + 1}/{count}")
+                
+            except Exception as e:
+                self.log(f"⚠️ Scroll interrupted: {str(e)[:30]}")
+                break
+        
+        try:
+            await page.evaluate("window.scrollTo(0, 0)")
+            await asyncio.sleep(0.5)
+        except:
+            pass
+    
+    async def dismiss_popups(self, page: Page):
+        """Try to dismiss any popups."""
+        try:
+            # Press Escape multiple times
+            for _ in range(3):
+                await page.keyboard.press("Escape")
+                await asyncio.sleep(0.3)
+            
+            # Try clicking common close buttons
+            close_selectors = [
+                'button[aria-label="close"]',
+                'button[aria-label="Close"]',
+                '.shopee-popup__close-btn',
+                '[class*="close-button"]',
+            ]
+            
+            for sel in close_selectors:
+                try:
+                    btn = await page.query_selector(sel)
+                    if btn:
+                        await btn.click(timeout=1000)
+                        await asyncio.sleep(0.3)
+                except:
+                    pass
+                    
+        except:
+            pass
+    
     async def scrape(
         self,
         keyword: str,
@@ -162,6 +225,7 @@ class ShopeeScraper:
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
+                    "--disable-popup-blocking",
                 ]
             )
             
@@ -187,7 +251,6 @@ class ShopeeScraper:
                 if ".mp4" in url or "/video/" in url.lower():
                     if url not in self.video_urls:
                         self.video_urls.append(url)
-                        self.log(f"🎬 Found video: {url[:60]}...")
             
             page.on("response", on_response)
             
@@ -210,31 +273,51 @@ class ShopeeScraper:
                 
                 try:
                     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    await asyncio.sleep(2)
                 except Exception as e:
                     self.log(f"⚠️ Page load issue: {str(e)[:30]}")
+                    continue
+                
+                # Wait for page to be stable
+                await self.wait_for_page_stable(page)
                 
                 # Check if redirected to login
                 current_url = page.url
-                if "login" in current_url.lower():
+                if "login" in current_url.lower() or "buyer" in current_url.lower():
                     self.log("⚠️ Session expired! Please login again")
                     COOKIES_PATH.unlink(missing_ok=True)
                     break
                 
-                # Auto-scroll
-                await self.auto_scroll(page)
+                # Dismiss any popups
+                await self.dismiss_popups(page)
                 
-                # Extract products
-                products = await self.extract_products(page)
+                # Wait a bit more for content to load
+                await asyncio.sleep(2)
+                
+                # Safe scroll
+                await self.safe_scroll(page, 5)
+                
+                # Wait after scrolling
+                await asyncio.sleep(1)
+                
+                # Extract products with retry
+                products = []
+                for attempt in range(3):
+                    try:
+                        products = await self.extract_products(page)
+                        if products:
+                            break
+                    except Exception as e:
+                        self.log(f"⚠️ Extract attempt {attempt + 1} failed: {str(e)[:30]}")
+                        await asyncio.sleep(1)
+                
                 all_products.extend(products)
-                
                 self.log(f"📊 Total: {len(all_products)} products")
                 
                 if page_num == 0 and len(products) == 0:
-                    self.log("❌ No products found, session may be invalid")
-                    break
+                    self.log("⚠️ No products found on first page")
+                    # Don't break - try next page
                 
-                # Delay
+                # Delay between pages
                 if page_num < max_pages - 1:
                     delay = random.uniform(2, 4)
                     self.log(f"⏳ Waiting {delay:.1f}s...")
@@ -258,160 +341,112 @@ class ShopeeScraper:
         self.log(f"🎉 Complete! Total: {len(all_products)} products")
         return all_products
     
-    async def auto_scroll(self, page: Page, count: int = 6):
-        """Auto-scroll to load lazy content."""
-        self.log(f"📜 Scrolling ({count}x)...")
-        
-        for i in range(count):
-            await page.evaluate("window.scrollBy(0, window.innerHeight)")
-            await asyncio.sleep(random.uniform(0.5, 1))
-        
-        await page.evaluate("window.scrollTo(0, 0)")
-        await asyncio.sleep(0.5)
-    
     async def extract_products(self, page: Page) -> List[Product]:
         """Extract products from current page."""
         self.log("🔎 Extracting products...")
         
         products = []
         
-        # Try multiple selectors
-        selectors = [
-            'a[data-sqe="link"]',
-            '[data-sqe="item"]',
-            'a[href*="-i."]',
-            '.shopee-search-item-result__item',
-        ]
-        
-        cards = []
-        for sel in selectors:
-            try:
-                await page.wait_for_selector(sel, timeout=5000)
-                cards = await page.query_selector_all(sel)
-                if cards:
-                    self.log(f"✅ Found with: {sel}")
-                    break
-            except:
-                continue
-        
-        if not cards:
-            self.log("⚠️ No product cards found")
+        # First, let's try to get page content to see what we have
+        try:
+            # Wait for any product-like elements
+            await page.wait_for_selector('a[href*="-i."]', timeout=10000)
+        except:
+            self.log("⚠️ No product links found")
             return []
         
-        self.log(f"📦 Processing {len(cards)} items...")
+        # Get all product links
+        try:
+            product_links = await page.query_selector_all('a[href*="-i."]')
+            self.log(f"📦 Found {len(product_links)} product links")
+        except Exception as e:
+            self.log(f"⚠️ Error finding products: {str(e)[:30]}")
+            return []
         
-        for card in cards[:60]:  # Limit
+        # Process each link
+        for link in product_links[:60]:  # Limit to 60
             try:
-                # Get link
-                if await card.get_attribute('href'):
-                    href = await card.get_attribute('href')
-                    elem = card
-                else:
-                    link = await card.query_selector('a[href*="-i."]') or await card.query_selector('a')
-                    if not link:
-                        continue
-                    href = await link.get_attribute('href')
-                    elem = card
-                
+                href = await link.get_attribute('href')
                 if not href or '-i.' not in href:
                     continue
                 
-                product_url = f"https://shopee.co.id{href}" if href.startswith('/') else href
+                # Build URL
+                if href.startswith('/'):
+                    product_url = f"https://shopee.co.id{href}"
+                else:
+                    product_url = href
                 
-                # Get title
-                title = "Unknown"
-                for sel in ['[data-sqe="name"]', 'div[class*="name"]', 'div[class*="title"]']:
-                    try:
-                        t = await elem.query_selector(sel)
-                        if t:
-                            title = await t.inner_text()
-                            break
-                    except:
-                        pass
+                # Get text content of the link container
+                text = ""
+                try:
+                    text = await link.inner_text()
+                except:
+                    pass
                 
-                if title == "Unknown":
-                    # Try getting text from link
-                    try:
-                        title = (await elem.inner_text())[:200]
-                    except:
-                        pass
+                # Parse the text to extract info
+                lines = [l.strip() for l in text.split('\n') if l.strip()]
                 
-                # Get price
+                title = lines[0] if lines else "Unknown Product"
                 price = 0.0
-                for sel in ['[data-sqe="item_price"]', 'span[class*="price"]', 'div[class*="price"]']:
-                    try:
-                        p = await elem.query_selector(sel)
-                        if p:
-                            text = await p.inner_text()
-                            price = self.parse_price(text)
-                            if price > 0:
-                                break
-                    except:
-                        pass
-                
-                # Get sold
                 sold = 0
-                for sel in ['[data-sqe="sold"]', 'span[class*="sold"]', 'div[class*="sold"]']:
-                    try:
-                        s = await elem.query_selector(sel)
-                        if s:
-                            text = await s.inner_text()
-                            sold = self.parse_sold(text)
-                            if sold > 0:
-                                break
-                    except:
-                        pass
-                
-                # Get rating
                 rating = 0.0
-                for sel in ['[data-sqe="rating"]', 'div[class*="rating"]']:
-                    try:
-                        r = await elem.query_selector(sel)
-                        if r:
-                            text = await r.inner_text()
-                            match = re.search(r'(\d+\.?\d*)', text)
-                            if match:
-                                rating = float(match.group(1))
-                                break
-                    except:
-                        pass
+                
+                for line in lines:
+                    line_lower = line.lower()
+                    # Price detection
+                    if 'rp' in line_lower or line.startswith('₫') or any(c.isdigit() for c in line):
+                        price_match = re.search(r'[\d.,]+', line.replace('.', ''))
+                        if price_match and price == 0:
+                            try:
+                                price = float(price_match.group().replace(',', ''))
+                            except:
+                                pass
+                    
+                    # Sold detection
+                    if 'terjual' in line_lower or 'sold' in line_lower:
+                        sold = self.parse_sold(line)
+                    
+                    # Rating detection
+                    if any(c.isdigit() for c in line) and '.' in line:
+                        try:
+                            num = float(re.search(r'\d+\.?\d*', line).group())
+                            if 0 < num <= 5:
+                                rating = num
+                        except:
+                            pass
                 
                 # Get thumbnail
                 thumbnail = None
                 try:
-                    img = await elem.query_selector('img')
+                    img = await link.query_selector('img')
                     if img:
                         thumbnail = await img.get_attribute('src')
                 except:
                     pass
                 
-                product = Product(
-                    title=title.strip()[:200] if title else "Unknown",
-                    price=price,
-                    original_price=None,
-                    star_rating=rating,
-                    review_count=int(sold * 0.1),
-                    monthly_sales=sold,
-                    thumbnail_url=thumbnail,
-                    video_url=self.video_urls[-1] if self.video_urls else None,
-                    has_video=len(self.video_urls) > 0,
-                    original_url=product_url,
-                    shop_name=None,
-                )
-                product.calculate_viral_score()
-                products.append(product)
-                
+                # Create product if we have a valid title
+                if title and title != "Unknown Product" and len(title) > 5:
+                    product = Product(
+                        title=title[:200],
+                        price=price,
+                        original_price=None,
+                        star_rating=rating,
+                        review_count=int(sold * 0.1) if sold else 0,
+                        monthly_sales=sold,
+                        thumbnail_url=thumbnail,
+                        video_url=self.video_urls[-1] if self.video_urls else None,
+                        has_video=len(self.video_urls) > 0,
+                        original_url=product_url,
+                        shop_name=None,
+                    )
+                    product.calculate_viral_score()
+                    products.append(product)
+                    
             except Exception as e:
                 continue
         
         self.log(f"✅ Extracted {len(products)} products")
         return products
-    
-    def parse_price(self, text: str) -> float:
-        if not text:
-            return 0.0
-        num = re.sub(r'[^\d]', '', text)
-        return float(num) if num else 0.0
     
     def parse_sold(self, text: str) -> int:
         if not text:
@@ -468,7 +503,7 @@ async def main():
         await scraper.open_login_browser()
     
     # Then scrape
-    products = await scraper.scrape("headphone", max_pages=1)
+    products = await scraper.scrape("tas wanita", max_pages=1)
     for p in products[:3]:
         print(f"{p.title[:40]} - Rp{p.price:,.0f}")
 

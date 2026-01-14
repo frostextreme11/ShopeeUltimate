@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
-from .routes import scraper, products
+from .routes import scraper, products, extension
 
 
 @asynccontextmanager
@@ -51,7 +51,13 @@ app = FastAPI(
 # CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173", 
+        "http://127.0.0.1:5173", 
+        "http://localhost:3000",
+        "chrome-extension://*",  # Allow Chrome extensions
+    ],
+    allow_origin_regex=r"^chrome-extension://.*$",  # Regex for any Chrome extension
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -60,6 +66,7 @@ app.add_middleware(
 # Include routers
 app.include_router(scraper.router)
 app.include_router(products.router)
+app.include_router(extension.router)
 
 
 @app.get("/")

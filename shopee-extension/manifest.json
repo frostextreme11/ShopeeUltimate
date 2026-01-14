@@ -1,0 +1,58 @@
+{
+    "manifest_version": 3,
+    "name": "ShopeeHunter",
+    "version": "1.0.0",
+    "description": "Automatic Shopee product scraper with viral score analysis",
+    "permissions": [
+        "activeTab",
+        "scripting",
+        "storage",
+        "tabs"
+    ],
+    "host_permissions": [
+        "https://shopee.co.id/*",
+        "https://*.shopee.co.id/*",
+        "http://localhost:8000/*"
+    ],
+    "action": {
+        "default_popup": "popup/popup.html",
+        "default_icon": {
+            "16": "icons/icon16.png",
+            "48": "icons/icon48.png",
+            "128": "icons/icon128.png"
+        },
+        "default_title": "ShopeeHunter - Viral Product Scraper"
+    },
+    "background": {
+        "service_worker": "scripts/background.js",
+        "type": "module"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://shopee.co.id/*",
+                "https://*.shopee.co.id/*"
+            ],
+            "js": [
+                "scripts/content.js"
+            ],
+            "css": [],
+            "run_at": "document_idle"
+        }
+    ],
+    "icons": {
+        "16": "icons/icon16.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+    },
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "assets/*"
+            ],
+            "matches": [
+                "https://shopee.co.id/*"
+            ]
+        }
+    ]
+}

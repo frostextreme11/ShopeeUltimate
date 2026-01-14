@@ -1,0 +1,120 @@
+/**
+* Icon generation script
+* Run this in browser console or use an online tool to generate PNGs
+*
+* For now, use these placeholder paths in manifest.json:
+* The extension will still work without icons, just showing the default puzzle piece
+*
+* To generate proper icons:
+* 1. Open this HTML file in a browser
+* 2. Right-click each canvas and "Save image as"
+* 3. Save as icon16.png, icon48.png, icon128.png in the icons folder
+*/
+
+// Quick way to create icons - create a simple HTML file and open in browser
+const html = `
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        body {
+            margin: 20px;
+            background: #1a1a1a;
+            color: white;
+            font-family: system-ui;
+        }
+
+        .icons {
+            display: flex;
+            gap: 20px;
+            align-items: end;
+            margin: 20px 0;
+        }
+
+        canvas {
+            border: 1px solid #333;
+            cursor: pointer;
+        }
+
+        p {
+            font-size: 12px;
+            color: #888;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>ShopeeHunter Icons</h2>
+    <p>Right-click each icon and select "Save image as..." to save as PNG</p>
+
+    <div class="icons">
+        <div>
+            <canvas id="c16" width="16" height="16"></canvas>
+            <p>icon16.png</p>
+        </div>
+        <div>
+            <canvas id="c48" width="48" height="48"></canvas>
+            <p>icon48.png</p>
+        </div>
+        <div>
+            <canvas id="c128" width="128" height="128"></canvas>
+            <p>icon128.png</p>
+        </div>
+    </div>
+
+    <script>
+        function drawIcon(ctx, size) {
+            const scale = size / 128;
+
+            // Background
+            const bgGrad = ctx.createLinearGradient(0, 0, size, size);
+            bgGrad.addColorStop(0, '#0a0a0f');
+            bgGrad.addColorStop(1, '#1a1a25');
+
+            // Cyber gradient
+            const cyberGrad = ctx.createLinearGradient(0, 0, size, size);
+            cyberGrad.addColorStop(0, '#00f0ff');
+            cyberGrad.addColorStop(1, '#ff00aa');
+
+            // Rounded background
+            const radius = Math.max(2, 20 * scale);
+            ctx.fillStyle = bgGrad;
+            ctx.beginPath();
+            ctx.roundRect(0, 0, size, size, radius);
+            ctx.fill();
+
+            // Border
+            ctx.strokeStyle = cyberGrad;
+            ctx.lineWidth = Math.max(1, 2 * scale);
+            ctx.globalAlpha = 0.6;
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+
+            // Lightning bolt
+            ctx.fillStyle = cyberGrad;
+            ctx.shadowColor = '#00f0ff';
+            ctx.shadowBlur = Math.max(2, 8 * scale);
+
+            ctx.beginPath();
+            ctx.moveTo(70 * scale, 18 * scale);
+            ctx.lineTo(38 * scale, 66 * scale);
+            ctx.lineTo(56 * scale, 66 * scale);
+            ctx.lineTo(50 * scale, 110 * scale);
+            ctx.lineTo(90 * scale, 54 * scale);
+            ctx.lineTo(68 * scale, 54 * scale);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        [16, 48, 128].forEach(size => {
+            const canvas = document.getElementById('c' + size);
+            drawIcon(canvas.getContext('2d'), size);
+        });
+    </script>
+</body>
+
+</html>
+`;
+
+console.log('Open generate-icons.html in a browser to create the icon files');

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShopeeHunter</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+    <div class="popup-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                </div>
+                <div class="logo-text">
+                    <h1>ShopeeHunter</h1>
+                    <span>Viral Product Scraper</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Status Card -->
+        <div class="status-card" id="statusCard">
+            <div class="status-icon" id="statusIcon">
+                <div class="status-dot"></div>
+            </div>
+            <div class="status-text">
+                <span class="status-title" id="statusTitle">Checking...</span>
+                <span class="status-subtitle" id="statusSubtitle">Detecting Shopee page</span>
+            </div>
+        </div>
+
+        <!-- Form Section -->
+        <div class="form-section" id="formSection">
+            <!-- Keyword Input -->
+            <div class="input-group">
+                <label for="keyword">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    Search Keyword
+                </label>
+                <input type="text" id="keyword" placeholder="e.g., headphone bluetooth, tas wanita..."
+                    autocomplete="off">
+            </div>
+
+            <!-- Max Pages Slider -->
+            <div class="input-group">
+                <label for="maxPages">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                    Max Pages: <span id="maxPagesValue">5</span>
+                </label>
+                <input type="range" id="maxPages" min="1" max="10" value="5">
+                <div class="slider-labels">
+                    <span>1</span>
+                    <span>5</span>
+                    <span>10</span>
+                </div>
+            </div>
+
+            <!-- Options -->
+            <div class="options-row">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="videoOnly">
+                    <span class="checkbox-custom"></span>
+                    <span>🎬 Video Only</span>
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="minRating">
+                    <span class="checkbox-custom"></span>
+                    <span>⭐ Min 4.0 Rating</span>
+                </label>
+            </div>
+
+            <!-- Action Button -->
+            <button class="btn-primary" id="startBtn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" />
+                </svg>
+                <span>Start Scraping</span>
+            </button>
+        </div>
+
+        <!-- Progress Section (hidden by default) -->
+        <div class="progress-section hidden" id="progressSection">
+            <div class="progress-header">
+                <span class="progress-title">
+                    <div class="spinner"></div>
+                    Scraping in progress...
+                </span>
+                <button class="btn-stop" id="stopBtn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                    Stop
+                </button>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar">
+                    <div class="progress-fill"></div>
+                    <div class="progress-shimmer"></div>
+                </div>
+                <span class="progress-text" id="progressText">0%</span>
+            </div>
+
+            <!-- Live Log -->
+            <div class="log-viewer" id="logViewer">
+                <div class="log-entry">
+                    <span class="log-time">--:--:--</span>
+                    <span class="log-message">Waiting to start...</span>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats-row">
+                <div class="stat-item">
+                    <span class="stat-value" id="statProducts">0</span>
+                    <span class="stat-label">📦 Products</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="statVideos">0</span>
+                    <span class="stat-label">🎬 With Video</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="statRating">0.0</span>
+                    <span class="stat-label">⭐ Avg Rating</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Success Section (hidden by default) -->
+        <div class="success-section hidden" id="successSection">
+            <div class="success-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+            </div>
+            <h2 class="success-title">Scraping Complete!</h2>
+            <p class="success-subtitle">
+                <span id="successCount">0</span> products found and sent to dashboard
+            </p>
+            <div class="success-actions">
+                <button class="btn-secondary" id="newScrapeBtn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                    New Scrape
+                </button>
+                <a href="http://localhost:5173" target="_blank" class="btn-primary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                    Open Dashboard
+                </a>
+            </div>
+        </div>
+
+        <!-- Error Section (hidden by default) -->
+        <div class="error-section hidden" id="errorSection">
+            <div class="error-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+            </div>
+            <h2 class="error-title">Scraping Failed</h2>
+            <p class="error-subtitle" id="errorMessage">An error occurred</p>
+            <button class="btn-secondary" id="retryBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                </svg>
+                Try Again
+            </button>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>ShopeeHunter v1.0.0</span>
+            <a href="http://localhost:5173" target="_blank">Dashboard</a>
+        </footer>
+    </div>
+
+    <!-- Confetti Canvas -->
+    <canvas id="confettiCanvas"></canvas>
+
+    <script src="popup.js"></script>
+</body>
+
+</html>
