@@ -27,6 +27,12 @@
                     <span>Viral Product Scraper</span>
                 </div>
             </div>
+            <!-- Toggle Advanced Filters -->
+            <button class="btn-icon" id="toggleFiltersBtn" title="Toggle Advanced Filters">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                </svg>
+            </button>
         </header>
 
         <!-- Status Card -->
@@ -72,7 +78,7 @@
                 </div>
             </div>
 
-            <!-- Options -->
+            <!-- Basic Options Row -->
             <div class="options-row">
                 <label class="checkbox-label">
                     <input type="checkbox" id="videoOnly">
@@ -80,10 +86,87 @@
                     <span>🎬 Video Only</span>
                 </label>
                 <label class="checkbox-label">
-                    <input type="checkbox" id="minRating">
+                    <input type="checkbox" id="hasPromo">
                     <span class="checkbox-custom"></span>
-                    <span>⭐ Min 4.0 Rating</span>
+                    <span>🏷️ Has Promo</span>
                 </label>
+            </div>
+
+            <!-- Advanced Filters (collapsible) -->
+            <div class="advanced-filters hidden" id="advancedFilters">
+                <div class="filter-section-title">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                    </svg>
+                    Advanced Filters
+                </div>
+
+                <!-- Star Rating Range -->
+                <div class="input-group">
+                    <label>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <polygon
+                                points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2">
+                            </polygon>
+                        </svg>
+                        Star Rating Range
+                    </label>
+                    <div class="range-inputs">
+                        <input type="number" id="minRating" placeholder="Min (0)" min="0" max="5" step="0.1">
+                        <span class="range-separator">—</span>
+                        <input type="number" id="maxRating" placeholder="Max (5)" min="0" max="5" step="0.1">
+                    </div>
+                </div>
+
+                <!-- Price Range -->
+                <div class="input-group">
+                    <label>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <line x1="12" y1="1" x2="12" y2="23"></line>
+                            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                        </svg>
+                        Price Range (Rp)
+                    </label>
+                    <div class="range-inputs">
+                        <input type="number" id="minPrice" placeholder="Min Price" min="0" step="1000">
+                        <span class="range-separator">—</span>
+                        <input type="number" id="maxPrice" placeholder="Max Price" min="0" step="1000">
+                    </div>
+                </div>
+
+                <!-- Seller Type -->
+                <div class="input-group">
+                    <label>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                        Seller Type
+                    </label>
+                    <select id="sellerType">
+                        <option value="">All Sellers</option>
+                        <option value="mall">🏬 Mall / Official</option>
+                        <option value="star">⭐ Star Seller</option>
+                        <option value="star+">⭐+ Star+ Seller</option>
+                    </select>
+                </div>
+
+                <!-- Location Filter -->
+                <div class="input-group">
+                    <label for="locations">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                            <circle cx="12" cy="10" r="3"></circle>
+                        </svg>
+                        Ship From Location
+                    </label>
+                    <input type="text" id="locations" placeholder="e.g., Jakarta, Bekasi, Tangerang">
+                    <span class="input-hint">Separate multiple locations with comma</span>
+                </div>
             </div>
 
             <!-- Action Button -->
@@ -197,7 +280,7 @@
 
         <!-- Footer -->
         <footer class="footer">
-            <span>ShopeeHunter v1.0.0</span>
+            <span>ShopeeHunter v1.1.0</span>
             <a href="http://localhost:5173" target="_blank">Dashboard</a>
         </footer>
     </div>

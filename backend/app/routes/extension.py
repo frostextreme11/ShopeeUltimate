@@ -27,6 +27,11 @@ class ExtensionProduct(BaseModel):
     has_video: bool = False
     original_url: str
     shop_name: Optional[str] = None
+    shop_location: Optional[str] = None
+    is_mall: bool = False
+    is_star_seller: bool = False
+    is_star_plus: bool = False
+    has_promo: bool = False
     viral_score: int = 0
     scraped_at: Optional[str] = None
 

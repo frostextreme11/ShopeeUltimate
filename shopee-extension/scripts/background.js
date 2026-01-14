@@ -1,6 +1,7 @@
 /**
  * ShopeeHunter Extension - Background Service Worker
  * Handles API calls, content script injection, and coordination
+ * Updated: Added all advanced filter options support
  */
 
 // ===================================
@@ -21,8 +22,17 @@ let scrapeState = {
     maxPages: 5,
     currentPage: 0,
     products: [],
-    videoOnly: false,
-    minRating: 0,
+    // Filter options
+    filters: {
+        videoOnly: false,
+        hasPromo: false,
+        minRating: 0,
+        maxRating: 0,
+        minPrice: 0,
+        maxPrice: 0,
+        sellerType: '',
+        locations: [],
+    },
 };
 
 // ===================================
@@ -63,7 +73,7 @@ async function handleMessage(message, sender) {
 // ===================================
 async function startScrape(data) {
     try {
-        // Reset state
+        // Reset state with all filter options
         scrapeState = {
             isActive: true,
             currentTabId: data.tabId,
@@ -71,8 +81,16 @@ async function startScrape(data) {
             maxPages: data.maxPages,
             currentPage: 0,
             products: [],
-            videoOnly: data.videoOnly,
-            minRating: data.minRating,
+            filters: {
+                videoOnly: data.videoOnly || false,
+                hasPromo: data.hasPromo || false,
+                minRating: data.minRating || 0,
+                maxRating: data.maxRating || 0,
+                minPrice: data.minPrice || 0,
+                maxPrice: data.maxPrice || 0,
+                sellerType: data.sellerType || '',
+                locations: data.locations || [],
+            },
         };
 
         sendToPopup('SCRAPE_LOG', { message: `Searching for: ${data.keyword}`, type: 'info' });
@@ -140,14 +158,21 @@ async function executeContentScript() {
             files: ['scripts/content.js'],
         });
 
-        // Wait a bit then send scrape command
+        // Wait a bit then send scrape command with ALL filter options
         setTimeout(async () => {
             if (scrapeState.isActive) {
                 await chrome.tabs.sendMessage(scrapeState.currentTabId, {
                     type: 'SCRAPE_PAGE',
                     data: {
-                        videoOnly: scrapeState.videoOnly,
-                        minRating: scrapeState.minRating,
+                        // Pass all filters to content script
+                        videoOnly: scrapeState.filters.videoOnly,
+                        hasPromo: scrapeState.filters.hasPromo,
+                        minRating: scrapeState.filters.minRating,
+                        maxRating: scrapeState.filters.maxRating,
+                        minPrice: scrapeState.filters.minPrice,
+                        maxPrice: scrapeState.filters.maxPrice,
+                        sellerType: scrapeState.filters.sellerType,
+                        locations: scrapeState.filters.locations,
                     },
                 });
             }

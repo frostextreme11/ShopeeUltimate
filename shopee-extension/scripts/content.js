@@ -1,6 +1,7 @@
 /**
  * ShopeeHunter Extension - Content Script
  * Extracts product data from Shopee search pages
+ * Fixed: Improved rating extraction, added new filters
  */
 
 // ===================================
@@ -35,6 +36,7 @@ async function handleScrapePage(options = {}) {
 
     try {
         log('Starting page scrape...');
+        log('Filters: ' + JSON.stringify(options));
 
         // Wait for page to be fully loaded
         await waitForElement('a[href*="-i."]', 10000);
@@ -48,7 +50,7 @@ async function handleScrapePage(options = {}) {
         // Extract products
         const products = await extractProducts(options);
 
-        log(`Extracted ${products.length} products`);
+        log(`Extracted ${products.length} products after filters`);
 
         // Send to background
         chrome.runtime.sendMessage({
@@ -90,12 +92,8 @@ async function extractProducts(options = {}) {
             const product = extractProductFromLink(link);
 
             if (product && !seenUrls.has(product.original_url)) {
-                // Apply filters
-                if (options.videoOnly && !product.has_video) {
-                    continue;
-                }
-
-                if (options.minRating && product.star_rating < options.minRating) {
+                // Apply all filters
+                if (!passesFilters(product, options)) {
                     continue;
                 }
 
@@ -111,6 +109,67 @@ async function extractProducts(options = {}) {
     return products;
 }
 
+// ===================================
+// Filter Logic
+// ===================================
+function passesFilters(product, options) {
+    // Video filter
+    if (options.videoOnly && !product.has_video) {
+        return false;
+    }
+
+    // Rating range filter
+    if (options.minRating && product.star_rating < options.minRating) {
+        return false;
+    }
+    if (options.maxRating && product.star_rating > options.maxRating) {
+        return false;
+    }
+
+    // Price range filter
+    if (options.minPrice && product.price < options.minPrice) {
+        return false;
+    }
+    if (options.maxPrice && product.price > options.maxPrice) {
+        return false;
+    }
+
+    // Seller type filter
+    if (options.sellerType) {
+        const sellerType = options.sellerType.toLowerCase();
+        if (sellerType === 'mall' && !product.is_mall) {
+            return false;
+        }
+        if (sellerType === 'star' && !product.is_star_seller) {
+            return false;
+        }
+        if (sellerType === 'star+' && !product.is_star_plus) {
+            return false;
+        }
+    }
+
+    // Location filter
+    if (options.locations && options.locations.length > 0) {
+        const productLocation = (product.shop_location || '').toLowerCase();
+        const matchesLocation = options.locations.some(loc =>
+            productLocation.includes(loc.toLowerCase().trim())
+        );
+        if (!matchesLocation) {
+            return false;
+        }
+    }
+
+    // Promo filter
+    if (options.hasPromo && !product.has_promo) {
+        return false;
+    }
+
+    return true;
+}
+
+// ===================================
+// Product Extraction from Link
+// ===================================
 function extractProductFromLink(link) {
     const href = link.getAttribute('href');
     if (!href || !href.includes('-i.')) {
@@ -124,36 +183,28 @@ function extractProductFromLink(link) {
 
     // Get container element (product card)
     const container = findProductContainer(link);
+    if (!container) return null;
 
-    // Extract text content
-    const allText = container ? container.innerText : link.innerText;
+    // Extract all data
+    const allText = container.innerText || '';
     const lines = allText.split('\n').map(l => l.trim()).filter(l => l);
 
-    // Extract title (usually first meaningful line)
-    let title = extractTitle(lines);
+    // Extract each field
+    const title = extractTitle(lines);
+    if (!title || title.length < 5) return null;
 
-    // Extract price
-    const price = extractPrice(lines);
-
-    // Extract rating
-    const rating = extractRating(container || link);
-
-    // Extract sold count
+    const price = extractPrice(container, lines);
+    const originalPrice = extractOriginalPrice(container, lines);
+    const rating = extractRating(container, lines);
     const sold = extractSoldCount(lines);
-
-    // Extract thumbnail
-    const thumbnail = extractThumbnail(container || link);
-
-    // Check for video
-    const hasVideo = checkHasVideo(container || link);
-
-    // Extract shop name
-    const shopName = extractShopName(container || link);
-
-    // Only return if we have a valid title
-    if (!title || title.length < 5) {
-        return null;
-    }
+    const thumbnail = extractThumbnail(container);
+    const hasVideo = checkHasVideo(container);
+    const shopName = extractShopName(container);
+    const shopLocation = extractShopLocation(container);
+    const isMall = checkIsMall(container);
+    const isStarSeller = checkIsStarSeller(container);
+    const isStarPlus = checkIsStarPlus(container);
+    const hasPromo = checkHasPromo(container, price, originalPrice);
 
     // Calculate viral score
     const viralScore = calculateViralScore(rating, sold);
@@ -161,7 +212,7 @@ function extractProductFromLink(link) {
     return {
         title: title.substring(0, 200),
         price: price,
-        original_price: null,
+        original_price: originalPrice,
         star_rating: rating,
         review_count: Math.floor(sold * 0.1),
         monthly_sales: sold,
@@ -170,6 +221,11 @@ function extractProductFromLink(link) {
         has_video: hasVideo,
         original_url: productUrl,
         shop_name: shopName,
+        shop_location: shopLocation,
+        is_mall: isMall,
+        is_star_seller: isStarSeller,
+        is_star_plus: isStarPlus,
+        has_promo: hasPromo,
         viral_score: viralScore,
         scraped_at: new Date().toISOString(),
     };
@@ -179,83 +235,95 @@ function extractProductFromLink(link) {
 // Extraction Helpers
 // ===================================
 function findProductContainer(element) {
-    // Try to find the product card container
     let current = element;
     let depth = 0;
 
     while (current && depth < 10) {
-        // Check if this looks like a product card
-        const style = window.getComputedStyle(current);
         const rect = current.getBoundingClientRect();
-
-        if (rect.width > 150 && rect.height > 200) {
+        // Product card typically 150-300px wide and 200-400px tall
+        if (rect.width > 140 && rect.width < 400 && rect.height > 180 && rect.height < 500) {
             return current;
         }
-
         current = current.parentElement;
         depth++;
     }
 
-    return element;
+    return element.closest('[data-sqe]') || element;
 }
 
 function extractTitle(lines) {
-    // Filter out lines that look like prices, ratings, or sold counts
     const filtered = lines.filter(line => {
         const lower = line.toLowerCase();
-
         // Skip price lines
-        if (lower.includes('rp') || /^\₫|^\d{1,3}(\.\d{3})+/.test(line)) {
-            return false;
-        }
-
-        // Skip rating lines
-        if (/^\d\.\d$/.test(line)) {
-            return false;
-        }
-
+        if (lower.includes('rp') || /^₫|^\d{1,3}(\.\d{3})+$/.test(line)) return false;
+        // Skip rating lines (just a number like "4.9")
+        if (/^\d\.\d$/.test(line)) return false;
         // Skip sold count lines
-        if (lower.includes('terjual') || lower.includes('sold')) {
-            return false;
-        }
-
-        // Skip very short lines
-        if (line.length < 10) {
-            return false;
-        }
-
+        if (lower.includes('terjual') || lower.includes('sold')) return false;
+        // Skip location lines
+        if (lower.includes('jakarta') || lower.includes('bandung') || lower.includes('surabaya')) return false;
+        // Skip short lines
+        if (line.length < 8) return false;
         return true;
     });
 
-    return filtered[0] || lines[0] || '';
+    return filtered[0] || '';
 }
 
-function extractPrice(lines) {
-    for (const line of lines) {
-        // Look for Rp price pattern
-        const match = line.match(/[Rp\₫]?\s*([\d.,]+)/);
-        if (match) {
-            const numStr = match[1].replace(/\./g, '').replace(',', '.');
-            const num = parseFloat(numStr);
+function extractPrice(container, lines) {
+    // Method 1: Look for price element with specific classes
+    const priceSelectors = [
+        '[class*="price"] span',
+        '[class*="Price"]',
+        '[data-sqe="price"]',
+        '.price',
+    ];
 
-            // Sanity check - price should be reasonable
-            if (num > 100 && num < 100000000) {
-                return num;
-            }
+    for (const sel of priceSelectors) {
+        const el = container.querySelector(sel);
+        if (el) {
+            const price = parsePrice(el.innerText);
+            if (price > 0) return price;
+        }
+    }
+
+    // Method 2: Parse from text lines
+    for (const line of lines) {
+        if (line.toLowerCase().includes('rp') || /^\d{1,3}(\.\d{3})+$/.test(line)) {
+            const price = parsePrice(line);
+            if (price > 100 && price < 100000000) return price;
         }
     }
 
     return 0;
 }
 
-function extractRating(element) {
-    // Look for rating elements
-    const ratingEl = element.querySelector('[class*="rating"]')
-        || element.querySelector('[aria-label*="rating"]');
+function extractOriginalPrice(container, lines) {
+    // Look for crossed-out price
+    const strikeEl = container.querySelector('del, s, [class*="original"], [class*="before"]');
+    if (strikeEl) {
+        const price = parsePrice(strikeEl.innerText);
+        if (price > 0) return price;
+    }
 
-    if (ratingEl) {
-        const text = ratingEl.innerText || ratingEl.getAttribute('aria-label') || '';
-        const match = text.match(/(\d+\.?\d*)/);
+    return null;
+}
+
+function parsePrice(text) {
+    if (!text) return 0;
+    // Remove currency symbols and extract numbers
+    const cleaned = text.replace(/[Rp₫\s]/gi, '').replace(/\./g, '').replace(',', '.');
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : num;
+}
+
+function extractRating(container, lines) {
+    // Method 1: Look for rating element near star icon
+    const ratingContainers = container.querySelectorAll('[class*="rating"], [class*="star"], [class*="review"]');
+    for (const el of ratingContainers) {
+        const text = el.innerText.trim();
+        // Look for pattern like "4.9" or "4.9/5"
+        const match = text.match(/^(\d\.\d)(?:\/5)?$/);
         if (match) {
             const rating = parseFloat(match[1]);
             if (rating >= 0 && rating <= 5) {
@@ -264,32 +332,49 @@ function extractRating(element) {
         }
     }
 
-    // Try to find in text
-    const allText = element.innerText;
+    // Method 2: Search all text for rating pattern
+    const allText = container.innerText;
+
+    // Pattern: standalone rating like "4.9" followed by sold count
     const patterns = [
-        /(\d\.\d)\s*\/\s*5/,
-        /rating:\s*(\d\.\d)/i,
-        /⭐\s*(\d\.\d)/,
+        /(\d\.\d)\s*(?:\n|\s).*?terjual/i,
+        /(\d\.\d)\s*(?:\n|\s).*?sold/i,
+        /(\d\.\d)\s*\|\s*\d/,
+        /^(\d\.\d)$/m,
     ];
 
     for (const pattern of patterns) {
         const match = allText.match(pattern);
         if (match) {
-            return parseFloat(match[1]);
+            const rating = parseFloat(match[1]);
+            if (rating >= 1 && rating <= 5) {
+                return rating;
+            }
         }
     }
 
-    // Look for star icons and count them
-    const stars = element.querySelectorAll('[class*="star"]');
-    if (stars.length > 0) {
+    // Method 3: Look for specific line format in lines
+    for (const line of lines) {
+        // Exact rating format: "4.9"
+        if (/^\d\.\d$/.test(line.trim())) {
+            const rating = parseFloat(line.trim());
+            if (rating >= 1 && rating <= 5) {
+                return rating;
+            }
+        }
+    }
+
+    // Method 4: Count filled star SVGs
+    const stars = container.querySelectorAll('svg[class*="star"], [class*="star"] svg');
+    if (stars.length >= 5) {
         let filled = 0;
         stars.forEach(star => {
-            if (star.classList.toString().includes('fill') ||
-                window.getComputedStyle(star).color !== 'rgb(189, 189, 189)') {
+            const fill = star.getAttribute('fill') || '';
+            if (fill.includes('#') && !fill.includes('none') && !fill.includes('gray')) {
                 filled++;
             }
         });
-        if (filled > 0 && filled <= 5) {
+        if (filled >= 1 && filled <= 5) {
             return filled;
         }
     }
@@ -300,12 +385,10 @@ function extractRating(element) {
 function extractSoldCount(lines) {
     for (const line of lines) {
         const lower = line.toLowerCase();
-
         if (lower.includes('terjual') || lower.includes('sold')) {
             return parseSoldCount(line);
         }
     }
-
     return 0;
 }
 
@@ -334,11 +417,9 @@ function parseSoldCount(text) {
 function extractThumbnail(element) {
     const img = element.querySelector('img');
     if (img) {
-        // Prefer data-src for lazy-loaded images
         return img.getAttribute('src') || img.getAttribute('data-src') || null;
     }
 
-    // Check for background image
     const bgElements = element.querySelectorAll('[style*="background"]');
     for (const el of bgElements) {
         const style = el.getAttribute('style') || '';
@@ -352,12 +433,13 @@ function extractThumbnail(element) {
 }
 
 function checkHasVideo(element) {
-    // Look for video indicators
+    // Check for video icon/badge
     const videoIndicators = [
-        '[class*="video"]',
-        '[class*="play"]',
+        'svg[class*="video"]',
+        '[class*="video-badge"]',
+        '[class*="video-icon"]',
+        '[class*="play-icon"]',
         'video',
-        '[aria-label*="video"]',
     ];
 
     for (const selector of videoIndicators) {
@@ -366,9 +448,9 @@ function checkHasVideo(element) {
         }
     }
 
-    // Check for video icon in text
-    const text = element.innerText.toLowerCase();
-    if (text.includes('🎬') || text.includes('📹')) {
+    // Check for video overlay or badge
+    const html = element.innerHTML.toLowerCase();
+    if (html.includes('data-video') || html.includes('video-badge')) {
         return true;
     }
 
@@ -376,31 +458,155 @@ function checkHasVideo(element) {
 }
 
 function extractShopName(element) {
-    // Look for shop name elements
-    const shopEl = element.querySelector('[class*="shop"]')
-        || element.querySelector('[class*="seller"]')
-        || element.querySelector('[class*="store"]');
+    const shopSelectors = [
+        '[class*="shop-name"]',
+        '[class*="shopName"]',
+        '[class*="seller-name"]',
+        '[class*="store-name"]',
+    ];
 
-    if (shopEl) {
-        const text = shopEl.innerText.trim();
-        if (text && text.length < 50) {
-            return text;
+    for (const sel of shopSelectors) {
+        const el = element.querySelector(sel);
+        if (el) {
+            const text = el.innerText.trim();
+            if (text && text.length < 50 && text.length > 1) {
+                return text;
+            }
         }
     }
 
     return null;
 }
 
-function calculateViralScore(rating, sold) {
-    // Normalize rating (0-5) to 0-100
-    const ratingScore = (rating / 5) * 30;
+function extractShopLocation(element) {
+    const locationSelectors = [
+        '[class*="location"]',
+        '[class*="address"]',
+        '[class*="shop-loc"]',
+    ];
 
-    // Normalize sold count (log scale)
+    for (const sel of locationSelectors) {
+        const el = element.querySelector(sel);
+        if (el) {
+            const text = el.innerText.trim();
+            if (text && text.length < 100) {
+                return text;
+            }
+        }
+    }
+
+    // Try to find location in text (usually city name)
+    const allText = element.innerText;
+    const cities = ['Jakarta', 'Bandung', 'Surabaya', 'Medan', 'Bekasi', 'Tangerang', 'Depok', 'Semarang', 'Palembang', 'Makassar', 'Bogor'];
+
+    for (const city of cities) {
+        if (allText.includes(city)) {
+            // Try to get the full location text
+            const lines = allText.split('\n');
+            for (const line of lines) {
+                if (line.includes(city) && line.length < 50) {
+                    return line.trim();
+                }
+            }
+            return city;
+        }
+    }
+
+    return null;
+}
+
+function checkIsMall(element) {
+    // Check for Mall badge
+    const mallIndicators = [
+        '[class*="mall"]',
+        '[class*="official"]',
+        'img[alt*="mall" i]',
+        'img[alt*="official" i]',
+    ];
+
+    for (const sel of mallIndicators) {
+        if (element.querySelector(sel)) {
+            return true;
+        }
+    }
+
+    // Check text for "Mall" badge
+    const html = element.innerHTML.toLowerCase();
+    return html.includes('shopeemall') || html.includes('official store');
+}
+
+function checkIsStarSeller(element) {
+    // Check for Star Seller badge
+    const starIndicators = [
+        '[class*="star-seller"]',
+        '[class*="preferred"]',
+        'img[alt*="star seller" i]',
+    ];
+
+    for (const sel of starIndicators) {
+        if (element.querySelector(sel)) {
+            return true;
+        }
+    }
+
+    const html = element.innerHTML.toLowerCase();
+    return html.includes('star seller') || html.includes('star-seller');
+}
+
+function checkIsStarPlus(element) {
+    // Check for Star+ badge
+    const starPlusIndicators = [
+        '[class*="star-plus"]',
+        '[class*="star+"]',
+        'img[alt*="star+" i]',
+    ];
+
+    for (const sel of starPlusIndicators) {
+        if (element.querySelector(sel)) {
+            return true;
+        }
+    }
+
+    const html = element.innerHTML.toLowerCase();
+    return html.includes('star+') || html.includes('star plus');
+}
+
+function checkHasPromo(element, price, originalPrice) {
+    // Has promo if there's a discount
+    if (originalPrice && originalPrice > price) {
+        return true;
+    }
+
+    // Check for promo badges
+    const promoIndicators = [
+        '[class*="promo"]',
+        '[class*="discount"]',
+        '[class*="sale"]',
+        '[class*="flash"]',
+        '[class*="voucher"]',
+    ];
+
+    for (const sel of promoIndicators) {
+        if (element.querySelector(sel)) {
+            return true;
+        }
+    }
+
+    // Check for discount percentage text
+    const text = element.innerText;
+    if (/%\s*off/i.test(text) || /-\d+%/.test(text)) {
+        return true;
+    }
+
+    return false;
+}
+
+function calculateViralScore(rating, sold) {
+    const ratingScore = (rating / 5) * 30;
     let soldScore = 0;
     if (sold > 0) {
         soldScore = Math.min(70, Math.log10(sold) * 20);
     }
-
     return Math.round(ratingScore + soldScore);
 }
 
@@ -419,7 +625,6 @@ async function autoScroll(times = 5) {
         await sleep(800 + Math.random() * 400);
     }
 
-    // Scroll back to top
     window.scrollTo({
         top: 0,
         behavior: 'smooth',

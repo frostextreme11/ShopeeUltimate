@@ -1,6 +1,7 @@
 /**
  * ShopeeHunter Extension - Popup Script
  * Handles UI interactions and messaging with background worker
+ * Updated: Added advanced filters support
  */
 
 // ===================================
@@ -18,6 +19,7 @@ let state = {
     isConnected: false,
     isScraping: false,
     currentTab: null,
+    showAdvancedFilters: false,
     stats: {
         products: 0,
         videos: 0,
@@ -41,9 +43,21 @@ const elements = {
     keyword: document.getElementById('keyword'),
     maxPages: document.getElementById('maxPages'),
     maxPagesValue: document.getElementById('maxPagesValue'),
-    videoOnly: document.getElementById('videoOnly'),
-    minRating: document.getElementById('minRating'),
     startBtn: document.getElementById('startBtn'),
+
+    // Basic Filters
+    videoOnly: document.getElementById('videoOnly'),
+    hasPromo: document.getElementById('hasPromo'),
+
+    // Advanced Filters
+    toggleFiltersBtn: document.getElementById('toggleFiltersBtn'),
+    advancedFilters: document.getElementById('advancedFilters'),
+    minRating: document.getElementById('minRating'),
+    maxRating: document.getElementById('maxRating'),
+    minPrice: document.getElementById('minPrice'),
+    maxPrice: document.getElementById('maxPrice'),
+    sellerType: document.getElementById('sellerType'),
+    locations: document.getElementById('locations'),
 
     // Progress
     progressSection: document.getElementById('progressSection'),
@@ -96,9 +110,25 @@ function setupEventListeners() {
         savePreferences();
     });
 
-    // Checkbox changes
+    // Toggle advanced filters
+    elements.toggleFiltersBtn.addEventListener('click', () => {
+        state.showAdvancedFilters = !state.showAdvancedFilters;
+        elements.advancedFilters.classList.toggle('hidden', !state.showAdvancedFilters);
+        elements.toggleFiltersBtn.classList.toggle('active', state.showAdvancedFilters);
+        savePreferences();
+    });
+
+    // Basic filter changes
     elements.videoOnly.addEventListener('change', savePreferences);
+    elements.hasPromo.addEventListener('change', savePreferences);
+
+    // Advanced filter changes
     elements.minRating.addEventListener('change', savePreferences);
+    elements.maxRating.addEventListener('change', savePreferences);
+    elements.minPrice.addEventListener('change', savePreferences);
+    elements.maxPrice.addEventListener('change', savePreferences);
+    elements.sellerType.addEventListener('change', savePreferences);
+    elements.locations.addEventListener('change', savePreferences);
 
     // Start button
     elements.startBtn.addEventListener('click', startScraping);
@@ -162,22 +192,58 @@ async function startScraping() {
         return;
     }
 
+    // Collect all filter options
+    const filterOptions = {
+        keyword,
+        maxPages: parseInt(elements.maxPages.value),
+        tabId: state.currentTab.id,
+
+        // Basic filters
+        videoOnly: elements.videoOnly.checked,
+        hasPromo: elements.hasPromo.checked,
+
+        // Rating range
+        minRating: parseFloat(elements.minRating.value) || 0,
+        maxRating: parseFloat(elements.maxRating.value) || 0,
+
+        // Price range
+        minPrice: parseFloat(elements.minPrice.value) || 0,
+        maxPrice: parseFloat(elements.maxPrice.value) || 0,
+
+        // Seller type
+        sellerType: elements.sellerType.value || '',
+
+        // Locations (parse comma-separated)
+        locations: elements.locations.value
+            ? elements.locations.value.split(',').map(l => l.trim()).filter(l => l)
+            : [],
+    };
+
     // Update UI
     state.isScraping = true;
     showProgressSection();
     addLog('Starting scrape...');
 
+    // Log active filters
+    const activeFilters = [];
+    if (filterOptions.videoOnly) activeFilters.push('Video Only');
+    if (filterOptions.hasPromo) activeFilters.push('Has Promo');
+    if (filterOptions.minRating > 0) activeFilters.push(`Min Rating: ${filterOptions.minRating}`);
+    if (filterOptions.maxRating > 0) activeFilters.push(`Max Rating: ${filterOptions.maxRating}`);
+    if (filterOptions.minPrice > 0) activeFilters.push(`Min Price: Rp${filterOptions.minPrice.toLocaleString()}`);
+    if (filterOptions.maxPrice > 0) activeFilters.push(`Max Price: Rp${filterOptions.maxPrice.toLocaleString()}`);
+    if (filterOptions.sellerType) activeFilters.push(`Seller: ${filterOptions.sellerType}`);
+    if (filterOptions.locations.length > 0) activeFilters.push(`Locations: ${filterOptions.locations.join(', ')}`);
+
+    if (activeFilters.length > 0) {
+        addLog(`Filters: ${activeFilters.join(' | ')}`);
+    }
+
     // Send message to background
     try {
         const response = await chrome.runtime.sendMessage({
             type: 'START_SCRAPE',
-            data: {
-                keyword,
-                maxPages: parseInt(elements.maxPages.value),
-                videoOnly: elements.videoOnly.checked,
-                minRating: elements.minRating.checked ? 4.0 : 0,
-                tabId: state.currentTab.id,
-            },
+            data: filterOptions,
         });
 
         if (response && response.success) {
@@ -327,10 +393,27 @@ async function loadPreferences() {
         const result = await chrome.storage.local.get(['preferences']);
         if (result.preferences) {
             const prefs = result.preferences;
+
+            // Basic settings
             elements.maxPages.value = prefs.maxPages || 5;
             elements.maxPagesValue.textContent = prefs.maxPages || 5;
             elements.videoOnly.checked = prefs.videoOnly || false;
-            elements.minRating.checked = prefs.minRating || false;
+            elements.hasPromo.checked = prefs.hasPromo || false;
+
+            // Advanced filters visibility
+            if (prefs.showAdvancedFilters) {
+                state.showAdvancedFilters = true;
+                elements.advancedFilters.classList.remove('hidden');
+                elements.toggleFiltersBtn.classList.add('active');
+            }
+
+            // Advanced filter values
+            if (prefs.minRating) elements.minRating.value = prefs.minRating;
+            if (prefs.maxRating) elements.maxRating.value = prefs.maxRating;
+            if (prefs.minPrice) elements.minPrice.value = prefs.minPrice;
+            if (prefs.maxPrice) elements.maxPrice.value = prefs.maxPrice;
+            if (prefs.sellerType) elements.sellerType.value = prefs.sellerType;
+            if (prefs.locations) elements.locations.value = prefs.locations;
         }
     } catch (error) {
         console.error('Error loading preferences:', error);
@@ -343,7 +426,14 @@ async function savePreferences() {
             preferences: {
                 maxPages: parseInt(elements.maxPages.value),
                 videoOnly: elements.videoOnly.checked,
-                minRating: elements.minRating.checked,
+                hasPromo: elements.hasPromo.checked,
+                showAdvancedFilters: state.showAdvancedFilters,
+                minRating: elements.minRating.value,
+                maxRating: elements.maxRating.value,
+                minPrice: elements.minPrice.value,
+                maxPrice: elements.maxPrice.value,
+                sellerType: elements.sellerType.value,
+                locations: elements.locations.value,
             },
         });
     } catch (error) {
