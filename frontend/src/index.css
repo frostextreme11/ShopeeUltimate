@@ -1,0 +1,227 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Base styles */
+:root {
+  --cyber-dark: #0a0a0f;
+  --cyber-darker: #050508;
+  --cyber-card: #12121a;
+  --cyber-border: #1a1a25;
+  --cyber-cyan: #00f0ff;
+  --cyber-magenta: #ff00aa;
+  --cyber-purple: #7b2cff;
+  --cyber-green: #00ff88;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: var(--cyber-dark);
+  color: #ffffff;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--cyber-darker);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--cyber-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cyber-cyan);
+}
+
+/* Cyberpunk utilities */
+@layer utilities {
+  .text-gradient-cyber {
+    background: linear-gradient(90deg, var(--cyber-cyan), var(--cyber-magenta));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .bg-gradient-cyber {
+    background: linear-gradient(135deg, var(--cyber-cyan) 0%, var(--cyber-magenta) 100%);
+  }
+
+  .border-gradient-cyber {
+    border-image: linear-gradient(135deg, var(--cyber-cyan), var(--cyber-magenta)) 1;
+  }
+
+  .glow-cyan {
+    box-shadow: 0 0 20px rgba(0, 240, 255, 0.4);
+  }
+
+  .glow-magenta {
+    box-shadow: 0 0 20px rgba(255, 0, 170, 0.4);
+  }
+
+  .glow-text-cyan {
+    text-shadow: 0 0 10px rgba(0, 240, 255, 0.8);
+  }
+
+  .glass {
+    background: rgba(18, 18, 26, 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .card-hover {
+    transition: all 0.3s ease;
+  }
+
+  .card-hover:hover {
+    transform: translateY(-4px) scale(1.02);
+    box-shadow: 0 10px 40px rgba(0, 240, 255, 0.2);
+  }
+}
+
+/* Button styles */
+@layer components {
+  .btn-cyber {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-300;
+    @apply bg-cyber-card border border-cyber-cyan/30;
+    @apply hover:bg-cyber-cyan/10 hover:border-cyber-cyan hover:shadow-cyber;
+    @apply active:scale-95;
+  }
+
+  .btn-cyber-primary {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-300;
+    @apply bg-gradient-to-r from-cyber-cyan to-cyber-purple text-white;
+    @apply hover:shadow-cyber-lg hover:scale-105;
+    @apply active:scale-95;
+  }
+
+  .btn-cyber-danger {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-300;
+    @apply bg-red-500/20 border border-red-500/50 text-red-400;
+    @apply hover:bg-red-500/30 hover:border-red-500;
+    @apply active:scale-95;
+  }
+
+  .input-cyber {
+    @apply w-full px-4 py-3 rounded-lg font-medium transition-all duration-300;
+    @apply bg-cyber-card border border-cyber-border text-white placeholder-gray-500;
+    @apply focus:outline-none focus:border-cyber-cyan focus:shadow-cyber;
+  }
+
+  .card-cyber {
+    @apply bg-cyber-card border border-cyber-border rounded-xl p-4;
+    @apply transition-all duration-300;
+  }
+}
+
+/* Terminal log styles */
+.terminal-log {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.terminal-log .log-info {
+  color: var(--cyber-cyan);
+}
+
+.terminal-log .log-success {
+  color: var(--cyber-green);
+}
+
+.terminal-log .log-warning {
+  color: #fbbf24;
+}
+
+.terminal-log .log-error {
+  color: #ef4444;
+}
+
+/* Badge styles */
+.badge-viral {
+  background: linear-gradient(135deg, var(--cyber-magenta), var(--cyber-purple));
+  animation: pulse 2s infinite;
+}
+
+.badge-video {
+  background: linear-gradient(135deg, var(--cyber-cyan), var(--cyber-green));
+}
+
+.badge-rating {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+}
+
+/* Skeleton loader animation */
+.skeleton {
+  background: linear-gradient(90deg,
+      var(--cyber-card) 25%,
+      var(--cyber-border) 50%,
+      var(--cyber-card) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Neon border animation */
+.neon-border {
+  position: relative;
+}
+
+.neon-border::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  background: linear-gradient(135deg, var(--cyber-cyan), var(--cyber-magenta), var(--cyber-cyan));
+  background-size: 200% 200%;
+  animation: borderGlow 3s linear infinite;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: -1;
+}
+
+@keyframes borderGlow {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
