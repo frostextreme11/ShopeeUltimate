@@ -48,17 +48,19 @@
 
         <!-- Form Section -->
         <div class="form-section" id="formSection">
-            <!-- Keyword Input -->
+            <!-- Keyword / Category URL Input -->
             <div class="input-group">
                 <label for="keyword">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"></circle>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
-                    Search Keyword
+                    Keyword or Category URL
                 </label>
-                <input type="text" id="keyword" placeholder="e.g., headphone bluetooth, tas wanita..."
+                <input type="text" id="keyword"
+                    placeholder="e.g., headphone bluetooth or https://shopee.co.id/Handphone-cat.123..."
                     autocomplete="off">
+                <span class="input-hint" id="inputTypeHint">Enter search keyword or paste Shopee category URL</span>
             </div>
 
             <!-- Max Pages Slider -->
@@ -90,6 +92,14 @@
                     <span class="checkbox-custom"></span>
                     <span>🏷️ Has Promo</span>
                 </label>
+            </div>
+            <div class="options-row">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="fetchVideoUrls">
+                    <span class="checkbox-custom"></span>
+                    <span>📹 Fetch Video URLs</span>
+                </label>
+                <span class="option-hint">(slower, but gets actual video)</span>
             </div>
 
             <!-- Advanced Filters (collapsible) -->

@@ -4,458 +4,589 @@
  * Fixed: Improved rating extraction, added new filters
  */
 
-// ===================================
-// State
-// ===================================
-let isScraperActive = false;
+// Guard to prevent duplicate script execution
+if (window.__shopeeHunterLoaded) {
+    console.log('[ShopeeHunter] Content script already loaded, skipping...');
+} else {
+    window.__shopeeHunterLoaded = true;
 
-// ===================================
-// Message Listener
-// ===================================
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'SCRAPE_PAGE') {
-        handleScrapePage(message.data)
-            .then((result) => sendResponse(result))
-            .catch((error) => sendResponse({ success: false, error: error.message }));
+    // ===================================
+    // State
+    // ===================================
+    let isScraperActive = false;
+
+    // ===================================
+    // Message Listener
+    // ===================================
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        if (message.type === 'SCRAPE_PAGE') {
+            handleScrapePage(message.data)
+                .then((result) => sendResponse(result))
+                .catch((error) => sendResponse({ success: false, error: error.message }));
+            return true;
+        }
+    });
+
+    // Notify background that content script is ready
+    chrome.runtime.sendMessage({ type: 'CONTENT_SCRIPT_READY' }).catch(() => { });
+
+    // ===================================
+    // Main Scrape Handler
+    // ===================================
+    async function handleScrapePage(options = {}) {
+        if (isScraperActive) {
+            return { success: false, error: 'Scraper already active' };
+        }
+
+        isScraperActive = true;
+
+        try {
+            log('Starting page scrape...');
+            log('Filters: ' + JSON.stringify(options));
+
+            // Wait for page to be fully loaded
+            await waitForElement('a[href*="-i."]', 10000);
+
+            // Auto-scroll to load all products
+            await autoScroll(5);
+
+            // Wait a bit for lazy-loaded content
+            await sleep(1000);
+
+            // Extract products
+            const products = await extractProducts(options);
+
+            log(`Extracted ${products.length} products after filters`);
+
+            // Send to background
+            chrome.runtime.sendMessage({
+                type: 'PRODUCTS_EXTRACTED',
+                data: { products },
+            });
+
+            isScraperActive = false;
+            return { success: true, count: products.length };
+
+        } catch (error) {
+            isScraperActive = false;
+            log(`Error: ${error.message}`);
+
+            // Still send results even if empty
+            chrome.runtime.sendMessage({
+                type: 'PRODUCTS_EXTRACTED',
+                data: { products: [] },
+            });
+
+            return { success: false, error: error.message };
+        }
+    }
+
+    // ===================================
+    // Product Extraction
+    // ===================================
+    async function extractProducts(options = {}) {
+        const products = [];
+        const seenUrls = new Set();
+        const fetchVideoUrls = options.fetchVideoUrls || false;
+
+        // Find all product links
+        const productLinks = document.querySelectorAll('a[href*="-i."]');
+
+        log(`Found ${productLinks.length} product links`);
+
+        for (const link of productLinks) {
+            try {
+                const product = extractProductFromLink(link);
+
+                if (product && !seenUrls.has(product.original_url)) {
+                    // Apply all filters
+                    if (!passesFilters(product, options)) {
+                        continue;
+                    }
+
+                    seenUrls.add(product.original_url);
+                    products.push(product);
+                }
+            } catch (e) {
+                // Skip failed products
+                continue;
+            }
+        }
+
+        // If fetchVideoUrls is enabled, try to get actual video URLs for products with videos
+        if (fetchVideoUrls && products.length > 0) {
+            const productsWithVideo = products.filter(p => p.has_video);
+            log(`Fetching video URLs for ${productsWithVideo.length} products with video badge...`);
+
+            for (let i = 0; i < productsWithVideo.length; i++) {
+                const product = productsWithVideo[i];
+                try {
+                    log(`Fetching video ${i + 1}/${productsWithVideo.length}...`);
+                    const videoUrl = await extractVideoFromDetailPage(product.original_url);
+                    if (videoUrl) {
+                        product.video_url = videoUrl;
+                        log(`Got video URL for: ${product.title.substring(0, 30)}...`);
+                    }
+                } catch (e) {
+                    log(`Failed to fetch video for: ${product.title.substring(0, 30)}`);
+                }
+            }
+        }
+
+        return products;
+    }
+
+    // ===================================
+    // Filter Logic
+    // ===================================
+    function passesFilters(product, options) {
+        // Video filter
+        if (options.videoOnly && !product.has_video) {
+            return false;
+        }
+
+        // Rating range filter
+        if (options.minRating && product.star_rating < options.minRating) {
+            return false;
+        }
+        if (options.maxRating && product.star_rating > options.maxRating) {
+            return false;
+        }
+
+        // Price range filter
+        if (options.minPrice && product.price < options.minPrice) {
+            return false;
+        }
+        if (options.maxPrice && product.price > options.maxPrice) {
+            return false;
+        }
+
+        // Seller type filter
+        if (options.sellerType) {
+            const sellerType = options.sellerType.toLowerCase();
+            if (sellerType === 'mall' && !product.is_mall) {
+                return false;
+            }
+            if (sellerType === 'star' && !product.is_star_seller) {
+                return false;
+            }
+            if (sellerType === 'star+' && !product.is_star_plus) {
+                return false;
+            }
+        }
+
+        // Location filter
+        if (options.locations && options.locations.length > 0) {
+            const productLocation = (product.shop_location || '').toLowerCase();
+            const matchesLocation = options.locations.some(loc =>
+                productLocation.includes(loc.toLowerCase().trim())
+            );
+            if (!matchesLocation) {
+                return false;
+            }
+        }
+
+        // Promo filter
+        if (options.hasPromo && !product.has_promo) {
+            return false;
+        }
+
         return true;
     }
-});
 
-// Notify background that content script is ready
-chrome.runtime.sendMessage({ type: 'CONTENT_SCRIPT_READY' }).catch(() => { });
+    // ===================================
+    // Product Extraction from Link
+    // ===================================
+    function extractProductFromLink(link) {
+        const href = link.getAttribute('href');
+        if (!href || !href.includes('-i.')) {
+            return null;
+        }
 
-// ===================================
-// Main Scrape Handler
-// ===================================
-async function handleScrapePage(options = {}) {
-    if (isScraperActive) {
-        return { success: false, error: 'Scraper already active' };
+        // Build full URL
+        const productUrl = href.startsWith('/')
+            ? `https://shopee.co.id${href}`
+            : href;
+
+        // Get container element (product card)
+        const container = findProductContainer(link);
+        if (!container) return null;
+
+        // Extract all data
+        const allText = container.innerText || '';
+        const lines = allText.split('\n').map(l => l.trim()).filter(l => l);
+
+        // Extract each field
+        const title = extractTitle(lines);
+        if (!title || title.length < 5) return null;
+
+        const price = extractPrice(container, lines);
+        const originalPrice = extractOriginalPrice(container, lines);
+        const rating = extractRating(container, lines);
+        const sold = extractSoldCount(lines);
+        const thumbnail = extractThumbnail(container);
+        const hasVideo = checkHasVideo(container);
+        const shopName = extractShopName(container);
+        const shopLocation = extractShopLocation(container);
+        const isMall = checkIsMall(container);
+        const isStarSeller = checkIsStarSeller(container);
+        const isStarPlus = checkIsStarPlus(container);
+        const hasPromo = checkHasPromo(container, price, originalPrice);
+
+        // Calculate viral score
+        const viralScore = calculateViralScore(rating, sold);
+
+        return {
+            title: title.substring(0, 200),
+            price: price,
+            original_price: originalPrice,
+            star_rating: rating,
+            review_count: Math.floor(sold * 0.1),
+            monthly_sales: sold,
+            thumbnail_url: thumbnail,
+            video_url: null,
+            has_video: hasVideo,
+            original_url: productUrl,
+            shop_name: shopName,
+            shop_location: shopLocation,
+            is_mall: isMall,
+            is_star_seller: isStarSeller,
+            is_star_plus: isStarPlus,
+            has_promo: hasPromo,
+            viral_score: viralScore,
+            scraped_at: new Date().toISOString(),
+        };
     }
 
-    isScraperActive = true;
+    // ===================================
+    // Extraction Helpers
+    // ===================================
+    function findProductContainer(element) {
+        let current = element;
+        let depth = 0;
 
-    try {
-        log('Starting page scrape...');
-        log('Filters: ' + JSON.stringify(options));
-
-        // Wait for page to be fully loaded
-        await waitForElement('a[href*="-i."]', 10000);
-
-        // Auto-scroll to load all products
-        await autoScroll(5);
-
-        // Wait a bit for lazy-loaded content
-        await sleep(1000);
-
-        // Extract products
-        const products = await extractProducts(options);
-
-        log(`Extracted ${products.length} products after filters`);
-
-        // Send to background
-        chrome.runtime.sendMessage({
-            type: 'PRODUCTS_EXTRACTED',
-            data: { products },
-        });
-
-        isScraperActive = false;
-        return { success: true, count: products.length };
-
-    } catch (error) {
-        isScraperActive = false;
-        log(`Error: ${error.message}`);
-
-        // Still send results even if empty
-        chrome.runtime.sendMessage({
-            type: 'PRODUCTS_EXTRACTED',
-            data: { products: [] },
-        });
-
-        return { success: false, error: error.message };
-    }
-}
-
-// ===================================
-// Product Extraction
-// ===================================
-async function extractProducts(options = {}) {
-    const products = [];
-    const seenUrls = new Set();
-
-    // Find all product links
-    const productLinks = document.querySelectorAll('a[href*="-i."]');
-
-    log(`Found ${productLinks.length} product links`);
-
-    for (const link of productLinks) {
-        try {
-            const product = extractProductFromLink(link);
-
-            if (product && !seenUrls.has(product.original_url)) {
-                // Apply all filters
-                if (!passesFilters(product, options)) {
-                    continue;
-                }
-
-                seenUrls.add(product.original_url);
-                products.push(product);
+        while (current && depth < 10) {
+            const rect = current.getBoundingClientRect();
+            // Product card typically 150-300px wide and 200-400px tall
+            if (rect.width > 140 && rect.width < 400 && rect.height > 180 && rect.height < 500) {
+                return current;
             }
-        } catch (e) {
-            // Skip failed products
-            continue;
+            current = current.parentElement;
+            depth++;
         }
+
+        return element.closest('[data-sqe]') || element;
     }
 
-    return products;
-}
+    function extractTitle(lines) {
+        const filtered = lines.filter(line => {
+            const lower = line.toLowerCase();
+            // Skip price lines
+            if (lower.includes('rp') || /^₫|^\d{1,3}(\.\d{3})+$/.test(line)) return false;
+            // Skip rating lines (just a number like "4.9")
+            if (/^\d\.\d$/.test(line)) return false;
+            // Skip sold count lines
+            if (lower.includes('terjual') || lower.includes('sold')) return false;
+            // Skip location lines
+            if (lower.includes('jakarta') || lower.includes('bandung') || lower.includes('surabaya')) return false;
+            // Skip short lines
+            if (line.length < 8) return false;
+            return true;
+        });
 
-// ===================================
-// Filter Logic
-// ===================================
-function passesFilters(product, options) {
-    // Video filter
-    if (options.videoOnly && !product.has_video) {
-        return false;
-    }
-
-    // Rating range filter
-    if (options.minRating && product.star_rating < options.minRating) {
-        return false;
-    }
-    if (options.maxRating && product.star_rating > options.maxRating) {
-        return false;
-    }
-
-    // Price range filter
-    if (options.minPrice && product.price < options.minPrice) {
-        return false;
-    }
-    if (options.maxPrice && product.price > options.maxPrice) {
-        return false;
+        return filtered[0] || '';
     }
 
-    // Seller type filter
-    if (options.sellerType) {
-        const sellerType = options.sellerType.toLowerCase();
-        if (sellerType === 'mall' && !product.is_mall) {
-            return false;
+    function extractPrice(container, lines) {
+        // Method 1: Look for price element with specific classes
+        const priceSelectors = [
+            '[class*="price"] span',
+            '[class*="Price"]',
+            '[data-sqe="price"]',
+            '.price',
+        ];
+
+        for (const sel of priceSelectors) {
+            const el = container.querySelector(sel);
+            if (el) {
+                const price = parsePrice(el.innerText);
+                if (price > 0) return price;
+            }
         }
-        if (sellerType === 'star' && !product.is_star_seller) {
-            return false;
+
+        // Method 2: Parse from text lines
+        for (const line of lines) {
+            if (line.toLowerCase().includes('rp') || /^\d{1,3}(\.\d{3})+$/.test(line)) {
+                const price = parsePrice(line);
+                if (price > 100 && price < 100000000) return price;
+            }
         }
-        if (sellerType === 'star+' && !product.is_star_plus) {
-            return false;
-        }
+
+        return 0;
     }
 
-    // Location filter
-    if (options.locations && options.locations.length > 0) {
-        const productLocation = (product.shop_location || '').toLowerCase();
-        const matchesLocation = options.locations.some(loc =>
-            productLocation.includes(loc.toLowerCase().trim())
-        );
-        if (!matchesLocation) {
-            return false;
+    function extractOriginalPrice(container, lines) {
+        // Look for crossed-out price
+        const strikeEl = container.querySelector('del, s, [class*="original"], [class*="before"]');
+        if (strikeEl) {
+            const price = parsePrice(strikeEl.innerText);
+            if (price > 0) return price;
         }
-    }
 
-    // Promo filter
-    if (options.hasPromo && !product.has_promo) {
-        return false;
-    }
-
-    return true;
-}
-
-// ===================================
-// Product Extraction from Link
-// ===================================
-function extractProductFromLink(link) {
-    const href = link.getAttribute('href');
-    if (!href || !href.includes('-i.')) {
         return null;
     }
 
-    // Build full URL
-    const productUrl = href.startsWith('/')
-        ? `https://shopee.co.id${href}`
-        : href;
-
-    // Get container element (product card)
-    const container = findProductContainer(link);
-    if (!container) return null;
-
-    // Extract all data
-    const allText = container.innerText || '';
-    const lines = allText.split('\n').map(l => l.trim()).filter(l => l);
-
-    // Extract each field
-    const title = extractTitle(lines);
-    if (!title || title.length < 5) return null;
-
-    const price = extractPrice(container, lines);
-    const originalPrice = extractOriginalPrice(container, lines);
-    const rating = extractRating(container, lines);
-    const sold = extractSoldCount(lines);
-    const thumbnail = extractThumbnail(container);
-    const hasVideo = checkHasVideo(container);
-    const shopName = extractShopName(container);
-    const shopLocation = extractShopLocation(container);
-    const isMall = checkIsMall(container);
-    const isStarSeller = checkIsStarSeller(container);
-    const isStarPlus = checkIsStarPlus(container);
-    const hasPromo = checkHasPromo(container, price, originalPrice);
-
-    // Calculate viral score
-    const viralScore = calculateViralScore(rating, sold);
-
-    return {
-        title: title.substring(0, 200),
-        price: price,
-        original_price: originalPrice,
-        star_rating: rating,
-        review_count: Math.floor(sold * 0.1),
-        monthly_sales: sold,
-        thumbnail_url: thumbnail,
-        video_url: null,
-        has_video: hasVideo,
-        original_url: productUrl,
-        shop_name: shopName,
-        shop_location: shopLocation,
-        is_mall: isMall,
-        is_star_seller: isStarSeller,
-        is_star_plus: isStarPlus,
-        has_promo: hasPromo,
-        viral_score: viralScore,
-        scraped_at: new Date().toISOString(),
-    };
-}
-
-// ===================================
-// Extraction Helpers
-// ===================================
-function findProductContainer(element) {
-    let current = element;
-    let depth = 0;
-
-    while (current && depth < 10) {
-        const rect = current.getBoundingClientRect();
-        // Product card typically 150-300px wide and 200-400px tall
-        if (rect.width > 140 && rect.width < 400 && rect.height > 180 && rect.height < 500) {
-            return current;
-        }
-        current = current.parentElement;
-        depth++;
+    function parsePrice(text) {
+        if (!text) return 0;
+        // Remove currency symbols and extract numbers
+        const cleaned = text.replace(/[Rp₫\s]/gi, '').replace(/\./g, '').replace(',', '.');
+        const num = parseFloat(cleaned);
+        return isNaN(num) ? 0 : num;
     }
 
-    return element.closest('[data-sqe]') || element;
-}
-
-function extractTitle(lines) {
-    const filtered = lines.filter(line => {
-        const lower = line.toLowerCase();
-        // Skip price lines
-        if (lower.includes('rp') || /^₫|^\d{1,3}(\.\d{3})+$/.test(line)) return false;
-        // Skip rating lines (just a number like "4.9")
-        if (/^\d\.\d$/.test(line)) return false;
-        // Skip sold count lines
-        if (lower.includes('terjual') || lower.includes('sold')) return false;
-        // Skip location lines
-        if (lower.includes('jakarta') || lower.includes('bandung') || lower.includes('surabaya')) return false;
-        // Skip short lines
-        if (line.length < 8) return false;
-        return true;
-    });
-
-    return filtered[0] || '';
-}
-
-function extractPrice(container, lines) {
-    // Method 1: Look for price element with specific classes
-    const priceSelectors = [
-        '[class*="price"] span',
-        '[class*="Price"]',
-        '[data-sqe="price"]',
-        '.price',
-    ];
-
-    for (const sel of priceSelectors) {
-        const el = container.querySelector(sel);
-        if (el) {
-            const price = parsePrice(el.innerText);
-            if (price > 0) return price;
-        }
-    }
-
-    // Method 2: Parse from text lines
-    for (const line of lines) {
-        if (line.toLowerCase().includes('rp') || /^\d{1,3}(\.\d{3})+$/.test(line)) {
-            const price = parsePrice(line);
-            if (price > 100 && price < 100000000) return price;
-        }
-    }
-
-    return 0;
-}
-
-function extractOriginalPrice(container, lines) {
-    // Look for crossed-out price
-    const strikeEl = container.querySelector('del, s, [class*="original"], [class*="before"]');
-    if (strikeEl) {
-        const price = parsePrice(strikeEl.innerText);
-        if (price > 0) return price;
-    }
-
-    return null;
-}
-
-function parsePrice(text) {
-    if (!text) return 0;
-    // Remove currency symbols and extract numbers
-    const cleaned = text.replace(/[Rp₫\s]/gi, '').replace(/\./g, '').replace(',', '.');
-    const num = parseFloat(cleaned);
-    return isNaN(num) ? 0 : num;
-}
-
-function extractRating(container, lines) {
-    // Method 1: Look for rating element near star icon
-    const ratingContainers = container.querySelectorAll('[class*="rating"], [class*="star"], [class*="review"]');
-    for (const el of ratingContainers) {
-        const text = el.innerText.trim();
-        // Look for pattern like "4.9" or "4.9/5"
-        const match = text.match(/^(\d\.\d)(?:\/5)?$/);
-        if (match) {
-            const rating = parseFloat(match[1]);
-            if (rating >= 0 && rating <= 5) {
-                return rating;
+    function extractRating(container, lines) {
+        // Method 1: Look for rating element near star icon
+        const ratingContainers = container.querySelectorAll('[class*="rating"], [class*="star"], [class*="review"]');
+        for (const el of ratingContainers) {
+            const text = el.innerText.trim();
+            // Look for pattern like "4.9" or "4.9/5"
+            const match = text.match(/^(\d\.\d)(?:\/5)?$/);
+            if (match) {
+                const rating = parseFloat(match[1]);
+                if (rating >= 0 && rating <= 5) {
+                    return rating;
+                }
             }
         }
-    }
 
-    // Method 2: Search all text for rating pattern
-    const allText = container.innerText;
+        // Method 2: Search all text for rating pattern
+        const allText = container.innerText;
 
-    // Pattern: standalone rating like "4.9" followed by sold count
-    const patterns = [
-        /(\d\.\d)\s*(?:\n|\s).*?terjual/i,
-        /(\d\.\d)\s*(?:\n|\s).*?sold/i,
-        /(\d\.\d)\s*\|\s*\d/,
-        /^(\d\.\d)$/m,
-    ];
+        // Pattern: standalone rating like "4.9" followed by sold count
+        const patterns = [
+            /(\d\.\d)\s*(?:\n|\s).*?terjual/i,
+            /(\d\.\d)\s*(?:\n|\s).*?sold/i,
+            /(\d\.\d)\s*\|\s*\d/,
+            /^(\d\.\d)$/m,
+        ];
 
-    for (const pattern of patterns) {
-        const match = allText.match(pattern);
-        if (match) {
-            const rating = parseFloat(match[1]);
-            if (rating >= 1 && rating <= 5) {
-                return rating;
+        for (const pattern of patterns) {
+            const match = allText.match(pattern);
+            if (match) {
+                const rating = parseFloat(match[1]);
+                if (rating >= 1 && rating <= 5) {
+                    return rating;
+                }
             }
         }
-    }
 
-    // Method 3: Look for specific line format in lines
-    for (const line of lines) {
-        // Exact rating format: "4.9"
-        if (/^\d\.\d$/.test(line.trim())) {
-            const rating = parseFloat(line.trim());
-            if (rating >= 1 && rating <= 5) {
-                return rating;
+        // Method 3: Look for specific line format in lines
+        for (const line of lines) {
+            // Exact rating format: "4.9"
+            if (/^\d\.\d$/.test(line.trim())) {
+                const rating = parseFloat(line.trim());
+                if (rating >= 1 && rating <= 5) {
+                    return rating;
+                }
             }
         }
-    }
 
-    // Method 4: Count filled star SVGs
-    const stars = container.querySelectorAll('svg[class*="star"], [class*="star"] svg');
-    if (stars.length >= 5) {
-        let filled = 0;
-        stars.forEach(star => {
-            const fill = star.getAttribute('fill') || '';
-            if (fill.includes('#') && !fill.includes('none') && !fill.includes('gray')) {
-                filled++;
+        // Method 4: Count filled star SVGs
+        const stars = container.querySelectorAll('svg[class*="star"], [class*="star"] svg');
+        if (stars.length >= 5) {
+            let filled = 0;
+            stars.forEach(star => {
+                const fill = star.getAttribute('fill') || '';
+                if (fill.includes('#') && !fill.includes('none') && !fill.includes('gray')) {
+                    filled++;
+                }
+            });
+            if (filled >= 1 && filled <= 5) {
+                return filled;
             }
-        });
-        if (filled >= 1 && filled <= 5) {
-            return filled;
         }
+
+        return 0;
     }
 
-    return 0;
-}
-
-function extractSoldCount(lines) {
-    for (const line of lines) {
-        const lower = line.toLowerCase();
-        if (lower.includes('terjual') || lower.includes('sold')) {
-            return parseSoldCount(line);
+    function extractSoldCount(lines) {
+        for (const line of lines) {
+            const lower = line.toLowerCase();
+            if (lower.includes('terjual') || lower.includes('sold')) {
+                return parseSoldCount(line);
+            }
         }
-    }
-    return 0;
-}
-
-function parseSoldCount(text) {
-    if (!text) return 0;
-
-    text = text.toLowerCase();
-    text = text.replace(/(terjual|sold|pcs|\+)/gi, '').trim();
-
-    // Handle "rb" (ribu = thousand) or "k"
-    if (text.includes('rb') || text.includes('k')) {
-        const num = text.replace(/[^0-9.,]/g, '').replace(',', '.');
-        return Math.round(parseFloat(num) * 1000) || 0;
+        return 0;
     }
 
-    // Handle "jt" or "m" (million)
-    if (text.includes('jt') || text.includes('m')) {
-        const num = text.replace(/[^0-9.,]/g, '').replace(',', '.');
-        return Math.round(parseFloat(num) * 1000000) || 0;
-    }
+    function parseSoldCount(text) {
+        if (!text) return 0;
 
-    const num = text.replace(/[^0-9]/g, '');
-    return parseInt(num) || 0;
-}
+        text = text.toLowerCase();
+        text = text.replace(/(terjual|sold|pcs|\+)/gi, '').trim();
 
-function extractThumbnail(element) {
-    const img = element.querySelector('img');
-    if (img) {
-        return img.getAttribute('src') || img.getAttribute('data-src') || null;
-    }
-
-    const bgElements = element.querySelectorAll('[style*="background"]');
-    for (const el of bgElements) {
-        const style = el.getAttribute('style') || '';
-        const match = style.match(/url\(['"]?([^'")\s]+)['"]?\)/);
-        if (match) {
-            return match[1];
+        // Handle "rb" (ribu = thousand) or "k"
+        if (text.includes('rb') || text.includes('k')) {
+            const num = text.replace(/[^0-9.,]/g, '').replace(',', '.');
+            return Math.round(parseFloat(num) * 1000) || 0;
         }
+
+        // Handle "jt" or "m" (million)
+        if (text.includes('jt') || text.includes('m')) {
+            const num = text.replace(/[^0-9.,]/g, '').replace(',', '.');
+            return Math.round(parseFloat(num) * 1000000) || 0;
+        }
+
+        const num = text.replace(/[^0-9]/g, '');
+        return parseInt(num) || 0;
     }
 
-    return null;
-}
+    function extractThumbnail(element) {
+        const img = element.querySelector('img');
+        if (img) {
+            return img.getAttribute('src') || img.getAttribute('data-src') || null;
+        }
 
-function checkHasVideo(element) {
-    // Check for video icon/badge
-    const videoIndicators = [
-        'svg[class*="video"]',
-        '[class*="video-badge"]',
-        '[class*="video-icon"]',
-        '[class*="play-icon"]',
-        'video',
-    ];
+        const bgElements = element.querySelectorAll('[style*="background"]');
+        for (const el of bgElements) {
+            const style = el.getAttribute('style') || '';
+            const match = style.match(/url\(['"]?([^'")\s]+)['"]?\)/);
+            if (match) {
+                return match[1];
+            }
+        }
 
-    for (const selector of videoIndicators) {
-        if (element.querySelector(selector)) {
+        return null;
+    }
+
+    function checkHasVideo(element) {
+        // PRIORITY 1: Check for Shopee's specific video badge using data-testid
+        // Element: <div data-testid="badge-video" ...>
+        const videoBadge = element.querySelector('[data-testid="badge-video"]');
+        if (videoBadge) {
+            log('Video detected via data-testid="badge-video"');
             return true;
         }
+
+        // PRIORITY 2: Check for any element with data-testid containing "video"
+        const anyVideoTestId = element.querySelector('[data-testid*="video"]');
+        if (anyVideoTestId) {
+            log('Video detected via data-testid containing "video"');
+            return true;
+        }
+
+        // PRIORITY 3: Check for actual video element
+        if (element.querySelector('video')) {
+            log('Video detected via video element');
+            return true;
+        }
+
+        // PRIORITY 4: Search the element's HTML for video patterns
+        const outerHTML = element.outerHTML.toLowerCase();
+        const videoPatterns = [
+            'badge-video',
+            'video-badge',
+            'data-video',
+            'has-video',
+            'with-video',
+            'play-icon',
+            'video-icon',
+        ];
+
+        for (const pattern of videoPatterns) {
+            if (outerHTML.includes(pattern)) {
+                log('Video detected via pattern in HTML: ' + pattern);
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    // Check for video overlay or badge
-    const html = element.innerHTML.toLowerCase();
-    if (html.includes('data-video') || html.includes('video-badge')) {
-        return true;
-    }
+    // Extract video URL from product detail page using fetch API
+    async function extractVideoFromDetailPage(productUrl) {
+        try {
+            log('Fetching video from: ' + productUrl.substring(0, 60) + '...');
 
-    return false;
+            // Fetch the product page HTML
+            const response = await fetch(productUrl, {
+                method: 'GET',
+                credentials: 'include',
+                headers: {
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                }
+            });
+
+            if (!response.ok) {
+                log('Failed to fetch product page: ' + response.status);
+                return null;
+            }
+
+            const html = await response.text();
+
+            // Method 1: Look for video_info in JSON data
+            // Shopee embeds product data in script tags
+            const videoInfoPatterns = [
+                /"video_info":\s*\{[^}]*"video_url":\s*"([^"]+)"/,
+                /"video_url":\s*"([^"]+)"/,
+                /"videoUrl":\s*"([^"]+)"/,
+                /"video":\s*\{[^}]*"url":\s*"([^"]+)"/,
+                /video_url['":\s]+['"]([^'"]+\.mp4[^'"]*)['"]/i,
+                /videoUrl['":\s]+['"]([^'"]+\.mp4[^'"]*)['"]/i,
+            ];
+
+            for (const pattern of videoInfoPatterns) {
+                const match = html.match(pattern);
+                if (match && match[1]) {
+                    let videoUrl = match[1];
+                    // Decode unicode escapes
+                    videoUrl = videoUrl.replace(/\\u002F/g, '/');
+                    videoUrl = videoUrl.replace(/\\\//g, '/');
+                    log('Found video URL: ' + videoUrl.substring(0, 80));
+                    return videoUrl;
+                }
+            }
+
+            // Method 2: Look for video source in HTML
+            const videoSrcPatterns = [
+                /<video[^>]*src=["']([^"']+)["']/i,
+                /<source[^>]*src=["']([^"']+\.mp4[^"']*)["']/i,
+                /data-video=["']([^"']+)["']/i,
+            ];
+
+            for (const pattern of videoSrcPatterns) {
+                const match = html.match(pattern);
+                if (match && match[1]) {
+                    log('Found video src: ' + match[1].substring(0, 80));
+                    return match[1];
+                }
+            }
+
+            // Method 3: Look for Shopee's video CDN URLs
+            const cdnPattern = /(https?:\/\/[^"'\s]*(?:video|vod|media)[^"'\s]*\.mp4[^"'\s]*)/i;
+            const cdnMatch = html.match(cdnPattern);
+            if (cdnMatch && cdnMatch[1]) {
+                let videoUrl = cdnMatch[1];
+                videoUrl = videoUrl.replace(/\\u002F/g, '/');
+                videoUrl = videoUrl.replace(/\\\//g, '/');
+                log('Found CDN video URL: ' + videoUrl.substring(0, 80));
+                return videoUrl;
+            }
+
+            log('No video URL found in product page');
+            return null;
+
+        } catch (error) {
+            log('Error fetching video: ' + error.message);
+            return null;
+        }
+    }
+});
+        } catch (error) {
+    log('Error extracting video: ' + error.message);
+    return null;
 }
+    }
 
 function extractShopName(element) {
     const shopSelectors = [
@@ -672,3 +803,5 @@ function log(message) {
 // Initialize
 // ===================================
 log('Content script loaded on: ' + window.location.href);
+
+} // End of guard if-else block

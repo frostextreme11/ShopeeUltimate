@@ -73,17 +73,25 @@ async function handleMessage(message, sender) {
 // ===================================
 async function startScrape(data) {
     try {
+        // Determine if we're scraping from URL or keyword search
+        const isUrl = data.isUrl || false;
+        const categoryUrl = data.categoryUrl || '';
+        const keyword = data.keyword || '';
+
         // Reset state with all filter options
         scrapeState = {
             isActive: true,
             currentTabId: data.tabId,
-            keyword: data.keyword,
+            keyword: keyword,
+            categoryUrl: categoryUrl,
+            isUrl: isUrl,
             maxPages: data.maxPages,
             currentPage: 0,
             products: [],
             filters: {
                 videoOnly: data.videoOnly || false,
                 hasPromo: data.hasPromo || false,
+                fetchVideoUrls: data.fetchVideoUrls || false,
                 minRating: data.minRating || 0,
                 maxRating: data.maxRating || 0,
                 minPrice: data.minPrice || 0,
@@ -93,10 +101,15 @@ async function startScrape(data) {
             },
         };
 
-        sendToPopup('SCRAPE_LOG', { message: `Searching for: ${data.keyword}`, type: 'info' });
-
-        // Navigate to first search page
-        await navigateToSearchPage(data.keyword, 0);
+        if (isUrl) {
+            sendToPopup('SCRAPE_LOG', { message: `Scraping from URL: ${categoryUrl.substring(0, 50)}...`, type: 'info' });
+            // Navigate to the category URL
+            await navigateToCategoryUrl(categoryUrl, 0);
+        } else {
+            sendToPopup('SCRAPE_LOG', { message: `Searching for: ${keyword}`, type: 'info' });
+            // Navigate to first search page
+            await navigateToSearchPage(keyword, 0);
+        }
 
         return { success: true };
     } catch (error) {
@@ -145,6 +158,55 @@ async function navigateToSearchPage(keyword, page) {
     }
 }
 
+async function navigateToCategoryUrl(categoryUrl, page) {
+    if (!scrapeState.isActive) return;
+
+    let url = categoryUrl;
+
+    // Parse and add page parameter
+    // Category URL format: https://shopee.co.id/Category-Name-cat.12345
+    // With pagination: https://shopee.co.id/Category-Name-cat.12345?page=0
+
+    if (page > 0) {
+        // Check if URL already has query params
+        if (url.includes('?')) {
+            // Replace or add page param
+            if (url.includes('page=')) {
+                url = url.replace(/page=\d+/, `page=${page}`);
+            } else {
+                url += `&page=${page}`;
+            }
+        } else {
+            url += `?page=${page}`;
+        }
+    }
+
+    sendToPopup('SCRAPE_LOG', { message: `Loading category page ${page + 1}/${scrapeState.maxPages}...`, type: 'info' });
+
+    try {
+        await chrome.tabs.update(scrapeState.currentTabId, { url });
+
+        // Wait for page to load then inject scraper
+        setTimeout(() => {
+            if (scrapeState.isActive) {
+                executeContentScript();
+            }
+        }, 3000);
+
+    } catch (error) {
+        sendToPopup('SCRAPE_ERROR', { message: `Navigation error: ${error.message}` });
+    }
+}
+
+// Helper function to navigate to next page (handles both keyword and category)
+function navigateToNextPage() {
+    if (scrapeState.isUrl) {
+        navigateToCategoryUrl(scrapeState.categoryUrl, scrapeState.currentPage);
+    } else {
+        navigateToSearchPage(scrapeState.keyword, scrapeState.currentPage);
+    }
+}
+
 // ===================================
 // Content Script Execution
 // ===================================
@@ -167,6 +229,7 @@ async function executeContentScript() {
                         // Pass all filters to content script
                         videoOnly: scrapeState.filters.videoOnly,
                         hasPromo: scrapeState.filters.hasPromo,
+                        fetchVideoUrls: scrapeState.filters.fetchVideoUrls,
                         minRating: scrapeState.filters.minRating,
                         maxRating: scrapeState.filters.maxRating,
                         minPrice: scrapeState.filters.minPrice,
@@ -218,7 +281,7 @@ async function handleProductsExtracted(data, tabId) {
         // Small delay before next page
         sendToPopup('SCRAPE_LOG', { message: 'Waiting before next page...', type: 'info' });
         setTimeout(() => {
-            navigateToSearchPage(scrapeState.keyword, scrapeState.currentPage);
+            navigateToNextPage();
         }, 2000 + Math.random() * 2000);
     } else {
         finishScrape();
@@ -240,7 +303,7 @@ async function handlePageComplete(data) {
 
     if (scrapeState.currentPage < scrapeState.maxPages && scrapeState.isActive) {
         setTimeout(() => {
-            navigateToSearchPage(scrapeState.keyword, scrapeState.currentPage);
+            navigateToNextPage();
         }, 2000);
     } else {
         finishScrape();

@@ -41,6 +41,7 @@ const elements = {
     // Form
     formSection: document.getElementById('formSection'),
     keyword: document.getElementById('keyword'),
+    inputTypeHint: document.getElementById('inputTypeHint'),
     maxPages: document.getElementById('maxPages'),
     maxPagesValue: document.getElementById('maxPagesValue'),
     startBtn: document.getElementById('startBtn'),
@@ -48,6 +49,7 @@ const elements = {
     // Basic Filters
     videoOnly: document.getElementById('videoOnly'),
     hasPromo: document.getElementById('hasPromo'),
+    fetchVideoUrls: document.getElementById('fetchVideoUrls'),
 
     // Advanced Filters
     toggleFiltersBtn: document.getElementById('toggleFiltersBtn'),
@@ -104,6 +106,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Event Listeners
 // ===================================
 function setupEventListeners() {
+    // Keyword/URL input - detect input type
+    elements.keyword.addEventListener('input', (e) => {
+        const value = e.target.value.trim();
+        updateInputTypeHint(value);
+    });
+
     // Max pages slider
     elements.maxPages.addEventListener('input', (e) => {
         elements.maxPagesValue.textContent = e.target.value;
@@ -121,6 +129,7 @@ function setupEventListeners() {
     // Basic filter changes
     elements.videoOnly.addEventListener('change', savePreferences);
     elements.hasPromo.addEventListener('change', savePreferences);
+    elements.fetchVideoUrls.addEventListener('change', savePreferences);
 
     // Advanced filter changes
     elements.minRating.addEventListener('change', savePreferences);
@@ -178,12 +187,42 @@ function updateStatus(type, title, subtitle) {
 }
 
 // ===================================
+// Input Type Detection
+// ===================================
+function isShopeeUrl(value) {
+    return value.startsWith('http') && value.includes('shopee.co.id');
+}
+
+function isCategoryUrl(value) {
+    // Pattern: https://shopee.co.id/Category-Name-cat.12345
+    return isShopeeUrl(value) && value.includes('-cat.');
+}
+
+function updateInputTypeHint(value) {
+    if (!elements.inputTypeHint) return;
+
+    if (!value) {
+        elements.inputTypeHint.textContent = 'Enter search keyword or paste Shopee category URL';
+        elements.inputTypeHint.className = 'input-hint';
+    } else if (isCategoryUrl(value)) {
+        elements.inputTypeHint.textContent = '📁 Category URL detected - will scrape this category';
+        elements.inputTypeHint.className = 'input-hint success';
+    } else if (isShopeeUrl(value)) {
+        elements.inputTypeHint.textContent = '🔗 Shopee URL detected - will scrape from this page';
+        elements.inputTypeHint.className = 'input-hint success';
+    } else {
+        elements.inputTypeHint.textContent = '🔍 Will search for: ' + value;
+        elements.inputTypeHint.className = 'input-hint';
+    }
+}
+
+// ===================================
 // Scraping Functions
 // ===================================
 async function startScraping() {
-    const keyword = elements.keyword.value.trim();
+    const inputValue = elements.keyword.value.trim();
 
-    if (!keyword) {
+    if (!inputValue) {
         elements.keyword.focus();
         elements.keyword.style.borderColor = 'var(--cyber-red)';
         setTimeout(() => {
@@ -192,15 +231,25 @@ async function startScraping() {
         return;
     }
 
+    // Determine if input is URL or keyword
+    const isUrl = isShopeeUrl(inputValue);
+    const isCategory = isCategoryUrl(inputValue);
+
     // Collect all filter options
     const filterOptions = {
-        keyword,
+        // Input can be keyword or URL
+        keyword: isUrl ? '' : inputValue,
+        categoryUrl: isUrl ? inputValue : '',
+        isUrl: isUrl,
+        isCategory: isCategory,
+
         maxPages: parseInt(elements.maxPages.value),
         tabId: state.currentTab.id,
 
         // Basic filters
         videoOnly: elements.videoOnly.checked,
         hasPromo: elements.hasPromo.checked,
+        fetchVideoUrls: elements.fetchVideoUrls.checked,
 
         // Rating range
         minRating: parseFloat(elements.minRating.value) || 0,
@@ -399,6 +448,7 @@ async function loadPreferences() {
             elements.maxPagesValue.textContent = prefs.maxPages || 5;
             elements.videoOnly.checked = prefs.videoOnly || false;
             elements.hasPromo.checked = prefs.hasPromo || false;
+            elements.fetchVideoUrls.checked = prefs.fetchVideoUrls || false;
 
             // Advanced filters visibility
             if (prefs.showAdvancedFilters) {
@@ -427,6 +477,7 @@ async function savePreferences() {
                 maxPages: parseInt(elements.maxPages.value),
                 videoOnly: elements.videoOnly.checked,
                 hasPromo: elements.hasPromo.checked,
+                fetchVideoUrls: elements.fetchVideoUrls.checked,
                 showAdvancedFilters: state.showAdvancedFilters,
                 minRating: elements.minRating.value,
                 maxRating: elements.maxRating.value,

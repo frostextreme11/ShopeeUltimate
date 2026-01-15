@@ -944,6 +944,18 @@ body {
     font-size: 10px;
     color: var(--text-muted);
     margin-top: 4px;
+    transition: color 0.3s ease;
+}
+
+.input-hint.success {
+    color: var(--cyber-green);
+}
+
+/* Option Hint */
+.option-hint {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-style: italic;
 }
 
 /* Responsive adjustments for small popup */
