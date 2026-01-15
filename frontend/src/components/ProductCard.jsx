@@ -34,13 +34,23 @@ export default function ProductCard({ product, index = 0, isNew = false }) {
         ? Math.round((1 - product.price / product.original_price) * 100)
         : 0
 
-    // Handle video download
+    // Handle video download - directly open video URL in new tab
     const handleDownloadVideo = async () => {
         try {
-            await downloadVideoMutation.mutateAsync(product.id)
-            // Show success notification
+            // If video_url is available, open it directly for download
+            if (product.video_url) {
+                window.open(product.video_url, '_blank');
+                return;
+            }
+
+            // Fallback to API download
+            const result = await downloadVideoMutation.mutateAsync(product.id);
+            if (result.success) {
+                alert(`Video downloaded to: ${result.filename}`);
+            }
         } catch (error) {
-            console.error('Failed to download video:', error)
+            console.error('Failed to download video:', error);
+            alert('Failed to download video. Check if video URL exists.');
         }
     }
 
@@ -239,14 +249,16 @@ export default function ProductCard({ product, index = 0, isNew = false }) {
                     )}
                 </motion.button>
 
-                {product.has_video && (
+                {/* Show download button if has_video OR video_url exists */}
+                {(product.has_video || product.video_url) && (
                     <motion.button
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
                         onClick={handleDownloadVideo}
                         disabled={downloadVideoMutation.isPending}
-                        className="btn-cyber text-xs py-2 flex items-center justify-center gap-1"
-                        title="Download Video"
+                        className={`btn-cyber text-xs py-2 flex items-center justify-center gap-1 ${product.video_url ? 'border-cyber-green text-cyber-green' : ''
+                            }`}
+                        title={product.video_url ? 'Download Video (URL Available)' : 'Download Video'}
                     >
                         {downloadVideoMutation.isPending ? (
                             <Loader2 className="w-3 h-3 animate-spin" />

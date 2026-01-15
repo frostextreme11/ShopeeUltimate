@@ -532,87 +532,100 @@ if (window.__shopeeHunterLoaded) {
 
             const html = await response.text();
 
-            // Method 1: Look for video URLs in Shopee's embedded JSON data
-            // Shopee embeds product data in script tags
-            const videoPatterns = [
-                // Video info patterns
-                /"video_info_list":\s*\[\s*\{[^}]*"video_url":\s*"([^"]+)"/,
-                /"video_url":\s*"(https?:[^"]+\.mp4[^"]*)"/i,
-                /"videoUrl":\s*"(https?:[^"]+\.mp4[^"]*)"/i,
-                /"video":\s*"(https?:[^"]+\.mp4[^"]*)"/i,
-                // VOD susercontent pattern
-                /"(https?:\\?\/\\?\/[^"]*vod\.susercontent\.com[^"]*\.mp4[^"]*)"/i,
-                /"(https?:\\?\/\\?\/[^"]*down-[^"]*\.vod\.susercontent\.com[^"]*)"/i,
-                // General mp4 pattern in JSON
-                /"url":\s*"(https?:[^"]+\.mp4[^"]*)"/i,
-            ];
+            // Helper function to clean video URL
+            const cleanVideoUrl = (url) => {
+                if (!url) return null;
+                // Decode all escaped characters
+                let cleaned = url
+                    .replace(/\\u002F/g, '/')
+                    .replace(/\\\//g, '/')
+                    .replace(/\\/g, '')
+                    .replace(/&amp;/g, '&');
+                return cleaned;
+            };
 
-            for (const pattern of videoPatterns) {
-                const match = html.match(pattern);
-                if (match && match[1]) {
-                    let videoUrl = match[1];
-                    // Decode escaped unicode and slashes
-                    videoUrl = videoUrl.replace(/\\u002F/g, '/');
-                    videoUrl = videoUrl.replace(/\\\//g, '/');
-                    videoUrl = videoUrl.replace(/\\/g, '');
-
-                    // Validate URL
-                    if (videoUrl.includes('http') && (videoUrl.includes('.mp4') || videoUrl.includes('vod.susercontent'))) {
-                        log('Found video URL: ' + videoUrl.substring(0, 100));
-                        return videoUrl;
-                    }
+            // Method 1: Look for video_url in JSON - capture everything between quotes
+            // Pattern: "video_url":"https://...full url here..."
+            const videoUrlPattern = /"video_url"\s*:\s*"([^"]+)"/gi;
+            let match;
+            while ((match = videoUrlPattern.exec(html)) !== null) {
+                const videoUrl = cleanVideoUrl(match[1]);
+                if (videoUrl && videoUrl.includes('http') && videoUrl.includes('.mp4')) {
+                    log('Found video_url: ' + videoUrl);
+                    console.log('[ShopeeHunter] VIDEO URL FOUND:', videoUrl);
+                    return videoUrl;
                 }
             }
 
-            // Method 2: Find video in script tags with type="application/json"
+            // Method 2: Look for vod.susercontent.com URLs with .mp4 extension
+            // This pattern captures everything from https to .mp4 and any query params
+            const vodMp4Pattern = /"(https?:[^"]*vod\.susercontent\.com[^"]*\.mp4[^"]*)"/gi;
+            while ((match = vodMp4Pattern.exec(html)) !== null) {
+                const videoUrl = cleanVideoUrl(match[1]);
+                if (videoUrl) {
+                    log('Found VOD mp4 URL: ' + videoUrl);
+                    console.log('[ShopeeHunter] VIDEO URL FOUND:', videoUrl);
+                    return videoUrl;
+                }
+            }
+
+            // Method 3: Look for down-*.vod.susercontent.com URLs
+            const downVodPattern = /"(https?:[^"]*down-[^"]*\.vod\.susercontent\.com[^"]*\.mp4[^"]*)"/gi;
+            while ((match = downVodPattern.exec(html)) !== null) {
+                const videoUrl = cleanVideoUrl(match[1]);
+                if (videoUrl) {
+                    log('Found down-* VOD URL: ' + videoUrl);
+                    console.log('[ShopeeHunter] VIDEO URL FOUND:', videoUrl);
+                    return videoUrl;
+                }
+            }
+
+            // Method 4: Look for any URL ending in .mp4
+            const anyMp4Pattern = /"(https?:[^"]+\.mp4)"/gi;
+            while ((match = anyMp4Pattern.exec(html)) !== null) {
+                const videoUrl = cleanVideoUrl(match[1]);
+                if (videoUrl && videoUrl.includes('susercontent')) {
+                    log('Found mp4 URL: ' + videoUrl);
+                    console.log('[ShopeeHunter] VIDEO URL FOUND:', videoUrl);
+                    return videoUrl;
+                }
+            }
+
+            // Method 5: Look in script tags for video data
             const scriptPattern = /<script[^>]*type="application\/json"[^>]*>([^<]+)<\/script>/gi;
-            let scriptMatch;
-            while ((scriptMatch = scriptPattern.exec(html)) !== null) {
-                const scriptContent = scriptMatch[1];
-                try {
-                    // Look for video URL in the JSON
-                    const vodMatch = scriptContent.match(/(https?:[^"]*vod\.susercontent\.com[^"]*)/i);
-                    if (vodMatch) {
-                        let videoUrl = vodMatch[1];
-                        videoUrl = videoUrl.replace(/\\u002F/g, '/');
-                        videoUrl = videoUrl.replace(/\\\//g, '/');
-                        videoUrl = videoUrl.replace(/\\/g, '');
-                        log('Found video URL in script: ' + videoUrl.substring(0, 100));
-                        return videoUrl;
-                    }
+            while ((match = scriptPattern.exec(html)) !== null) {
+                const scriptContent = match[1];
 
-                    const mp4Match = scriptContent.match(/(https?:[^"]*\.mp4[^"]*)/i);
-                    if (mp4Match) {
-                        let videoUrl = mp4Match[1];
-                        videoUrl = videoUrl.replace(/\\u002F/g, '/');
-                        videoUrl = videoUrl.replace(/\\\//g, '/');
-                        videoUrl = videoUrl.replace(/\\/g, '');
-                        log('Found mp4 URL in script: ' + videoUrl.substring(0, 100));
+                // Find video_url in script content
+                const videoMatch = scriptContent.match(/"video_url"\s*:\s*"([^"]+)"/i);
+                if (videoMatch) {
+                    const videoUrl = cleanVideoUrl(videoMatch[1]);
+                    if (videoUrl && videoUrl.includes('.mp4')) {
+                        log('Found video URL in script: ' + videoUrl);
+                        console.log('[ShopeeHunter] VIDEO URL FOUND:', videoUrl);
                         return videoUrl;
                     }
-                } catch (e) {
-                    // Continue to next script
+                }
+
+                // Find any mp4 URL in script
+                const mp4Match = scriptContent.match(/"(https?:[^"]+\.mp4[^"]*)"/i);
+                if (mp4Match) {
+                    const videoUrl = cleanVideoUrl(mp4Match[1]);
+                    if (videoUrl && videoUrl.includes('susercontent')) {
+                        log('Found mp4 in script: ' + videoUrl);
+                        console.log('[ShopeeHunter] VIDEO URL FOUND:', videoUrl);
+                        return videoUrl;
+                    }
                 }
             }
 
-            // Method 3: Look for any vod.susercontent.com URL in entire HTML
-            const vodPattern = /(https?:\/\/[^"'\s]*vod\.susercontent\.com[^"'\s]*)/i;
-            const vodMatch = html.match(vodPattern);
-            if (vodMatch) {
-                let videoUrl = vodMatch[1];
-                videoUrl = videoUrl.replace(/\\u002F/g, '/');
-                videoUrl = videoUrl.replace(/\\\//g, '/');
-                log('Found VOD URL in HTML: ' + videoUrl.substring(0, 100));
-                return videoUrl;
-            }
-
-            // Method 4: Look for down-bs-sg patterns (Shopee video CDN)
-            const cdnPattern = /(https?:\/\/down-[^"'\s]*\.mp4[^"'\s]*)/i;
-            const cdnMatch = html.match(cdnPattern);
-            if (cdnMatch) {
-                let videoUrl = cdnMatch[1];
-                videoUrl = videoUrl.replace(/\\/g, '');
-                log('Found CDN video URL: ' + videoUrl.substring(0, 100));
+            // Method 6: Last resort - find any susercontent video URL in raw HTML
+            const lastResortPattern = /https?:\/\/[^"'\s\\]*(?:down-[^"'\s\\]*)?vod\.susercontent\.com[^"'\s\\]*\.mp4[^"'\s\\]*/gi;
+            const lastMatch = html.match(lastResortPattern);
+            if (lastMatch && lastMatch[0]) {
+                const videoUrl = cleanVideoUrl(lastMatch[0]);
+                log('Found video URL (last resort): ' + videoUrl);
+                console.log('[ShopeeHunter] VIDEO URL FOUND:', videoUrl);
                 return videoUrl;
             }
 
