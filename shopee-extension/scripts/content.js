@@ -208,6 +208,10 @@ if (window.__shopeeHunterLoaded) {
             ? `https://shopee.co.id${href}`
             : href;
 
+        // Debug: Log the extracted URL
+        console.log('[ShopeeHunter DEBUG] Extracted href:', href);
+        console.log('[ShopeeHunter DEBUG] Full product URL:', productUrl);
+
         // Get container element (product card)
         const container = findProductContainer(link);
         if (!container) return null;
@@ -503,305 +507,339 @@ if (window.__shopeeHunterLoaded) {
         return false;
     }
 
-    // Extract video URL from product detail page using fetch API
+    // Extract video URL from product page by fetching HTML and parsing embedded data
     async function extractVideoFromDetailPage(productUrl) {
         try {
-            log('Fetching video from: ' + productUrl.substring(0, 60) + '...');
+            // Log full URL - don't truncate!
+            log('Fetching video from: ' + productUrl);
+            console.log('[ShopeeHunter] FETCHING VIDEO - Full URL:', productUrl);
+            console.log('[ShopeeHunter] URL length:', productUrl.length);
 
-            // Fetch the product page HTML
+            // Fetch the product page HTML (not API to avoid 403)
             const response = await fetch(productUrl, {
                 method: 'GET',
                 credentials: 'include',
                 headers: {
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'id-ID,id;q=0.9,en;q=0.8',
                 }
             });
 
             if (!response.ok) {
-                log('Failed to fetch product page: ' + response.status);
+                log('Failed to fetch page: ' + response.status);
                 return null;
             }
 
             const html = await response.text();
 
-            // Method 1: Look for video_info in JSON data
+            // Method 1: Look for video URLs in Shopee's embedded JSON data
             // Shopee embeds product data in script tags
-            const videoInfoPatterns = [
-                /"video_info":\s*\{[^}]*"video_url":\s*"([^"]+)"/,
-                /"video_url":\s*"([^"]+)"/,
-                /"videoUrl":\s*"([^"]+)"/,
-                /"video":\s*\{[^}]*"url":\s*"([^"]+)"/,
-                /video_url['":\s]+['"]([^'"]+\.mp4[^'"]*)['"]/i,
-                /videoUrl['":\s]+['"]([^'"]+\.mp4[^'"]*)['"]/i,
+            const videoPatterns = [
+                // Video info patterns
+                /"video_info_list":\s*\[\s*\{[^}]*"video_url":\s*"([^"]+)"/,
+                /"video_url":\s*"(https?:[^"]+\.mp4[^"]*)"/i,
+                /"videoUrl":\s*"(https?:[^"]+\.mp4[^"]*)"/i,
+                /"video":\s*"(https?:[^"]+\.mp4[^"]*)"/i,
+                // VOD susercontent pattern
+                /"(https?:\\?\/\\?\/[^"]*vod\.susercontent\.com[^"]*\.mp4[^"]*)"/i,
+                /"(https?:\\?\/\\?\/[^"]*down-[^"]*\.vod\.susercontent\.com[^"]*)"/i,
+                // General mp4 pattern in JSON
+                /"url":\s*"(https?:[^"]+\.mp4[^"]*)"/i,
             ];
 
-            for (const pattern of videoInfoPatterns) {
+            for (const pattern of videoPatterns) {
                 const match = html.match(pattern);
                 if (match && match[1]) {
                     let videoUrl = match[1];
-                    // Decode unicode escapes
+                    // Decode escaped unicode and slashes
                     videoUrl = videoUrl.replace(/\\u002F/g, '/');
                     videoUrl = videoUrl.replace(/\\\//g, '/');
-                    log('Found video URL: ' + videoUrl.substring(0, 80));
-                    return videoUrl;
+                    videoUrl = videoUrl.replace(/\\/g, '');
+
+                    // Validate URL
+                    if (videoUrl.includes('http') && (videoUrl.includes('.mp4') || videoUrl.includes('vod.susercontent'))) {
+                        log('Found video URL: ' + videoUrl.substring(0, 100));
+                        return videoUrl;
+                    }
                 }
             }
 
-            // Method 2: Look for video source in HTML
-            const videoSrcPatterns = [
-                /<video[^>]*src=["']([^"']+)["']/i,
-                /<source[^>]*src=["']([^"']+\.mp4[^"']*)["']/i,
-                /data-video=["']([^"']+)["']/i,
-            ];
+            // Method 2: Find video in script tags with type="application/json"
+            const scriptPattern = /<script[^>]*type="application\/json"[^>]*>([^<]+)<\/script>/gi;
+            let scriptMatch;
+            while ((scriptMatch = scriptPattern.exec(html)) !== null) {
+                const scriptContent = scriptMatch[1];
+                try {
+                    // Look for video URL in the JSON
+                    const vodMatch = scriptContent.match(/(https?:[^"]*vod\.susercontent\.com[^"]*)/i);
+                    if (vodMatch) {
+                        let videoUrl = vodMatch[1];
+                        videoUrl = videoUrl.replace(/\\u002F/g, '/');
+                        videoUrl = videoUrl.replace(/\\\//g, '/');
+                        videoUrl = videoUrl.replace(/\\/g, '');
+                        log('Found video URL in script: ' + videoUrl.substring(0, 100));
+                        return videoUrl;
+                    }
 
-            for (const pattern of videoSrcPatterns) {
-                const match = html.match(pattern);
-                if (match && match[1]) {
-                    log('Found video src: ' + match[1].substring(0, 80));
-                    return match[1];
+                    const mp4Match = scriptContent.match(/(https?:[^"]*\.mp4[^"]*)/i);
+                    if (mp4Match) {
+                        let videoUrl = mp4Match[1];
+                        videoUrl = videoUrl.replace(/\\u002F/g, '/');
+                        videoUrl = videoUrl.replace(/\\\//g, '/');
+                        videoUrl = videoUrl.replace(/\\/g, '');
+                        log('Found mp4 URL in script: ' + videoUrl.substring(0, 100));
+                        return videoUrl;
+                    }
+                } catch (e) {
+                    // Continue to next script
                 }
             }
 
-            // Method 3: Look for Shopee's video CDN URLs
-            const cdnPattern = /(https?:\/\/[^"'\s]*(?:video|vod|media)[^"'\s]*\.mp4[^"'\s]*)/i;
-            const cdnMatch = html.match(cdnPattern);
-            if (cdnMatch && cdnMatch[1]) {
-                let videoUrl = cdnMatch[1];
+            // Method 3: Look for any vod.susercontent.com URL in entire HTML
+            const vodPattern = /(https?:\/\/[^"'\s]*vod\.susercontent\.com[^"'\s]*)/i;
+            const vodMatch = html.match(vodPattern);
+            if (vodMatch) {
+                let videoUrl = vodMatch[1];
                 videoUrl = videoUrl.replace(/\\u002F/g, '/');
                 videoUrl = videoUrl.replace(/\\\//g, '/');
-                log('Found CDN video URL: ' + videoUrl.substring(0, 80));
+                log('Found VOD URL in HTML: ' + videoUrl.substring(0, 100));
                 return videoUrl;
             }
 
-            log('No video URL found in product page');
+            // Method 4: Look for down-bs-sg patterns (Shopee video CDN)
+            const cdnPattern = /(https?:\/\/down-[^"'\s]*\.mp4[^"'\s]*)/i;
+            const cdnMatch = html.match(cdnPattern);
+            if (cdnMatch) {
+                let videoUrl = cdnMatch[1];
+                videoUrl = videoUrl.replace(/\\/g, '');
+                log('Found CDN video URL: ' + videoUrl.substring(0, 100));
+                return videoUrl;
+            }
+
+            log('No video URL found in page HTML');
             return null;
 
         } catch (error) {
             log('Error fetching video: ' + error.message);
+            console.error('[ShopeeHunter] Error:', error);
             return null;
         }
     }
-});
-        } catch (error) {
-    log('Error extracting video: ' + error.message);
-    return null;
-}
-    }
 
-function extractShopName(element) {
-    const shopSelectors = [
-        '[class*="shop-name"]',
-        '[class*="shopName"]',
-        '[class*="seller-name"]',
-        '[class*="store-name"]',
-    ];
+    function extractShopName(element) {
+        const shopSelectors = [
+            '[class*="shop-name"]',
+            '[class*="shopName"]',
+            '[class*="seller-name"]',
+            '[class*="store-name"]',
+        ];
 
-    for (const sel of shopSelectors) {
-        const el = element.querySelector(sel);
-        if (el) {
-            const text = el.innerText.trim();
-            if (text && text.length < 50 && text.length > 1) {
-                return text;
-            }
-        }
-    }
-
-    return null;
-}
-
-function extractShopLocation(element) {
-    const locationSelectors = [
-        '[class*="location"]',
-        '[class*="address"]',
-        '[class*="shop-loc"]',
-    ];
-
-    for (const sel of locationSelectors) {
-        const el = element.querySelector(sel);
-        if (el) {
-            const text = el.innerText.trim();
-            if (text && text.length < 100) {
-                return text;
-            }
-        }
-    }
-
-    // Try to find location in text (usually city name)
-    const allText = element.innerText;
-    const cities = ['Jakarta', 'Bandung', 'Surabaya', 'Medan', 'Bekasi', 'Tangerang', 'Depok', 'Semarang', 'Palembang', 'Makassar', 'Bogor'];
-
-    for (const city of cities) {
-        if (allText.includes(city)) {
-            // Try to get the full location text
-            const lines = allText.split('\n');
-            for (const line of lines) {
-                if (line.includes(city) && line.length < 50) {
-                    return line.trim();
+        for (const sel of shopSelectors) {
+            const el = element.querySelector(sel);
+            if (el) {
+                const text = el.innerText.trim();
+                if (text && text.length < 50 && text.length > 1) {
+                    return text;
                 }
             }
-            return city;
         }
+
+        return null;
     }
 
-    return null;
-}
+    function extractShopLocation(element) {
+        const locationSelectors = [
+            '[class*="location"]',
+            '[class*="address"]',
+            '[class*="shop-loc"]',
+        ];
 
-function checkIsMall(element) {
-    // Check for Mall badge
-    const mallIndicators = [
-        '[class*="mall"]',
-        '[class*="official"]',
-        'img[alt*="mall" i]',
-        'img[alt*="official" i]',
-    ];
+        for (const sel of locationSelectors) {
+            const el = element.querySelector(sel);
+            if (el) {
+                const text = el.innerText.trim();
+                if (text && text.length < 100) {
+                    return text;
+                }
+            }
+        }
 
-    for (const sel of mallIndicators) {
-        if (element.querySelector(sel)) {
+        // Try to find location in text (usually city name)
+        const allText = element.innerText;
+        const cities = ['Jakarta', 'Bandung', 'Surabaya', 'Medan', 'Bekasi', 'Tangerang', 'Depok', 'Semarang', 'Palembang', 'Makassar', 'Bogor'];
+
+        for (const city of cities) {
+            if (allText.includes(city)) {
+                // Try to get the full location text
+                const lines = allText.split('\n');
+                for (const line of lines) {
+                    if (line.includes(city) && line.length < 50) {
+                        return line.trim();
+                    }
+                }
+                return city;
+            }
+        }
+
+        return null;
+    }
+
+    function checkIsMall(element) {
+        // Check for Mall badge
+        const mallIndicators = [
+            '[class*="mall"]',
+            '[class*="official"]',
+            'img[alt*="mall" i]',
+            'img[alt*="official" i]',
+        ];
+
+        for (const sel of mallIndicators) {
+            if (element.querySelector(sel)) {
+                return true;
+            }
+        }
+
+        // Check text for "Mall" badge
+        const html = element.innerHTML.toLowerCase();
+        return html.includes('shopeemall') || html.includes('official store');
+    }
+
+    function checkIsStarSeller(element) {
+        // Check for Star Seller badge
+        const starIndicators = [
+            '[class*="star-seller"]',
+            '[class*="preferred"]',
+            'img[alt*="star seller" i]',
+        ];
+
+        for (const sel of starIndicators) {
+            if (element.querySelector(sel)) {
+                return true;
+            }
+        }
+
+        const html = element.innerHTML.toLowerCase();
+        return html.includes('star seller') || html.includes('star-seller');
+    }
+
+    function checkIsStarPlus(element) {
+        // Check for Star+ badge
+        const starPlusIndicators = [
+            '[class*="star-plus"]',
+            '[class*="star+"]',
+            'img[alt*="star+" i]',
+        ];
+
+        for (const sel of starPlusIndicators) {
+            if (element.querySelector(sel)) {
+                return true;
+            }
+        }
+
+        const html = element.innerHTML.toLowerCase();
+        return html.includes('star+') || html.includes('star plus');
+    }
+
+    function checkHasPromo(element, price, originalPrice) {
+        // Has promo if there's a discount
+        if (originalPrice && originalPrice > price) {
             return true;
         }
-    }
 
-    // Check text for "Mall" badge
-    const html = element.innerHTML.toLowerCase();
-    return html.includes('shopeemall') || html.includes('official store');
-}
+        // Check for promo badges
+        const promoIndicators = [
+            '[class*="promo"]',
+            '[class*="discount"]',
+            '[class*="sale"]',
+            '[class*="flash"]',
+            '[class*="voucher"]',
+        ];
 
-function checkIsStarSeller(element) {
-    // Check for Star Seller badge
-    const starIndicators = [
-        '[class*="star-seller"]',
-        '[class*="preferred"]',
-        'img[alt*="star seller" i]',
-    ];
+        for (const sel of promoIndicators) {
+            if (element.querySelector(sel)) {
+                return true;
+            }
+        }
 
-    for (const sel of starIndicators) {
-        if (element.querySelector(sel)) {
+        // Check for discount percentage text
+        const text = element.innerText;
+        if (/%\s*off/i.test(text) || /-\d+%/.test(text)) {
             return true;
         }
+
+        return false;
     }
 
-    const html = element.innerHTML.toLowerCase();
-    return html.includes('star seller') || html.includes('star-seller');
-}
-
-function checkIsStarPlus(element) {
-    // Check for Star+ badge
-    const starPlusIndicators = [
-        '[class*="star-plus"]',
-        '[class*="star+"]',
-        'img[alt*="star+" i]',
-    ];
-
-    for (const sel of starPlusIndicators) {
-        if (element.querySelector(sel)) {
-            return true;
+    function calculateViralScore(rating, sold) {
+        const ratingScore = (rating / 5) * 30;
+        let soldScore = 0;
+        if (sold > 0) {
+            soldScore = Math.min(70, Math.log10(sold) * 20);
         }
+        return Math.round(ratingScore + soldScore);
     }
 
-    const html = element.innerHTML.toLowerCase();
-    return html.includes('star+') || html.includes('star plus');
-}
+    // ===================================
+    // Utility Functions
+    // ===================================
+    async function autoScroll(times = 5) {
+        log(`Auto-scrolling ${times} times...`);
 
-function checkHasPromo(element, price, originalPrice) {
-    // Has promo if there's a discount
-    if (originalPrice && originalPrice > price) {
-        return true;
-    }
+        for (let i = 0; i < times; i++) {
+            window.scrollBy({
+                top: window.innerHeight,
+                behavior: 'smooth',
+            });
 
-    // Check for promo badges
-    const promoIndicators = [
-        '[class*="promo"]',
-        '[class*="discount"]',
-        '[class*="sale"]',
-        '[class*="flash"]',
-        '[class*="voucher"]',
-    ];
-
-    for (const sel of promoIndicators) {
-        if (element.querySelector(sel)) {
-            return true;
+            await sleep(800 + Math.random() * 400);
         }
-    }
 
-    // Check for discount percentage text
-    const text = element.innerText;
-    if (/%\s*off/i.test(text) || /-\d+%/.test(text)) {
-        return true;
-    }
-
-    return false;
-}
-
-function calculateViralScore(rating, sold) {
-    const ratingScore = (rating / 5) * 30;
-    let soldScore = 0;
-    if (sold > 0) {
-        soldScore = Math.min(70, Math.log10(sold) * 20);
-    }
-    return Math.round(ratingScore + soldScore);
-}
-
-// ===================================
-// Utility Functions
-// ===================================
-async function autoScroll(times = 5) {
-    log(`Auto-scrolling ${times} times...`);
-
-    for (let i = 0; i < times; i++) {
-        window.scrollBy({
-            top: window.innerHeight,
+        window.scrollTo({
+            top: 0,
             behavior: 'smooth',
         });
 
-        await sleep(800 + Math.random() * 400);
+        await sleep(500);
     }
 
-    window.scrollTo({
-        top: 0,
-        behavior: 'smooth',
-    });
-
-    await sleep(500);
-}
-
-function waitForElement(selector, timeout = 5000) {
-    return new Promise((resolve, reject) => {
-        const element = document.querySelector(selector);
-        if (element) {
-            return resolve(element);
-        }
-
-        const observer = new MutationObserver((mutations, obs) => {
+    function waitForElement(selector, timeout = 5000) {
+        return new Promise((resolve, reject) => {
             const element = document.querySelector(selector);
             if (element) {
-                obs.disconnect();
-                resolve(element);
+                return resolve(element);
             }
+
+            const observer = new MutationObserver((mutations, obs) => {
+                const element = document.querySelector(selector);
+                if (element) {
+                    obs.disconnect();
+                    resolve(element);
+                }
+            });
+
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+            });
+
+            setTimeout(() => {
+                observer.disconnect();
+                reject(new Error(`Timeout waiting for ${selector}`));
+            }, timeout);
         });
+    }
 
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-        });
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
 
-        setTimeout(() => {
-            observer.disconnect();
-            reject(new Error(`Timeout waiting for ${selector}`));
-        }, timeout);
-    });
-}
+    function log(message) {
+        console.log(`[ShopeeHunter] ${message}`);
+    }
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function log(message) {
-    console.log(`[ShopeeHunter] ${message}`);
-}
-
-// ===================================
-// Initialize
-// ===================================
-log('Content script loaded on: ' + window.location.href);
+    // ===================================
+    // Initialize
+    // ===================================
+    log('Content script loaded on: ' + window.location.href);
 
 } // End of guard if-else block

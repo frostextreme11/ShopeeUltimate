@@ -17,6 +17,8 @@ export function useProducts(filters = {}) {
         queryKey: ['products', filters],
         queryFn: () => getProducts(filters),
         keepPreviousData: true,
+        refetchInterval: 3000, // Auto-refresh every 3 seconds for real-time updates
+        refetchIntervalInBackground: false, // Only refresh when tab is active
     })
 }
 

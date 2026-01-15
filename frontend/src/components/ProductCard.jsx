@@ -16,7 +16,7 @@ import { useDownloadVideo, useGenerateAffiliateLink, useDeleteProduct } from '..
 /**
  * Animated product card with badges and action buttons
  */
-export default function ProductCard({ product, index = 0 }) {
+export default function ProductCard({ product, index = 0, isNew = false }) {
     const [isHovered, setIsHovered] = useState(false)
     const [showAffiliateModal, setShowAffiliateModal] = useState(false)
 
@@ -88,8 +88,25 @@ export default function ProductCard({ product, index = 0 }) {
             whileHover={{ scale: 1.02, y: -4 }}
             onHoverStart={() => setIsHovered(true)}
             onHoverEnd={() => setIsHovered(false)}
-            className="card-cyber card-hover relative overflow-hidden group"
+            className={`card-cyber card-hover relative overflow-hidden group ${isNew ? 'ring-2 ring-cyber-cyan ring-opacity-50' : ''
+                }`}
         >
+            {/* New product glow effect */}
+            {isNew && (
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{
+                        opacity: [0.3, 0.6, 0.3],
+                    }}
+                    transition={{
+                        repeat: Infinity,
+                        duration: 2,
+                        ease: 'easeInOut',
+                    }}
+                    className="absolute inset-0 bg-gradient-to-br from-cyber-cyan/20 to-cyber-green/20 pointer-events-none"
+                />
+            )}
+
             {/* Glow effect on hover */}
             <motion.div
                 initial={{ opacity: 0 }}
